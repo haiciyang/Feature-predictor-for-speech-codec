@@ -1,0 +1,16 @@
+samples/
+logs/
+saved_models/
+results/
+params/
+*.txt
+loss/
+.ipynb_checkpoints/
+__pycache__/
+B
+
+*.ipynb
+C
+C
+/
+
