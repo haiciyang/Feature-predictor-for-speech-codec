@@ -4,10 +4,10 @@ import torch.nn.functional as F
 from modules import Conv, ResBlock
 
 
-class Wavenet_Student(nn.Module):
-    def __init__(self, num_blocks_student=[1, 1, 1, 1, 1, 1], num_layers=10, in_channels=1, front_channels=32, residual_channels=64, gate_channels=128, skip_channels=64, kernel_size=3, cin_channels=80, causal=True, upsample_scales=[16, 16]):
-        super(Wavenet_Student, self).__init__()
-        self.num_blocks = num_blocks_student
+class Wavenet_IAF(nn.Module):
+    def __init__(self, num_blocks_iaf=[1, 1, 1, 1, 1, 1], num_layers=10, in_channels=1, front_channels=32, residual_channels=64, gate_channels=128, skip_channels=64, kernel_size=3, cin_channels=80, cout_channels=128, causal=True, upsample_scales=[16, 16]):
+        super(Wavenet_IAF, self).__init__()
+        self.num_blocks = num_blocks_iaf
         self.num_flow = len(self.num_blocks)
         self.num_layers = num_layers
 
@@ -17,7 +17,7 @@ class Wavenet_Student(nn.Module):
                                           num_blocks=self.num_blocks[i], num_layers=self.num_layers,
                                           front_channels=front_channels, residual_channels=residual_channels,
                                           gate_channels=gate_channels, skip_channels=skip_channels,
-                                          kernel_size=kernel_size, cin_channels=cin_channels, causal=causal))
+                                          kernel_size=kernel_size, cout_channels=cout_channels, causal=causal))
 
         # Copying the upsampling function from wavenet
         self.upsample_conv = nn.ModuleList()
@@ -29,6 +29,20 @@ class Wavenet_Student(nn.Module):
             self.upsample_conv.append(nn.LeakyReLU(0.4))
             
         self.down_z = Conv(in_channels, 1, 1)
+        
+        self.c_conv = nn.Sequential(
+            nn.Conv1d(cin_channels, cout_channels, 3, padding=1),
+            nn.Tanh(),
+            nn.Conv1d(cout_channels, cout_channels, 3, padding=1),
+            nn.Tanh()
+        )
+        
+        self.c_fc = nn.Sequential(
+            nn.Linear(cout_channels, cout_channels),
+            nn.Tanh(),
+            nn.Linear(cout_channels, cout_channels),
+            nn.Tanh(),
+        )
         
         
     def forward(self, z, c):
@@ -50,6 +64,10 @@ class Wavenet_Student(nn.Module):
 
     
     def upsample(self, c):
+        
+        c = torch.transpose(self.c_conv(c), 1, 2) # (bt, L, C)
+        c = torch.transpose(self.c_fc(c), 1, 2) # (br, C, L) 
+        
         if self.upsample_conv is not None:
             # B x 1 x C x T'
             c = c.unsqueeze(1)
@@ -77,7 +95,7 @@ class Wavenet_Student(nn.Module):
 class Wavenet_Flow(nn.Module):
     def __init__(self, out_channels=1, num_blocks=1, num_layers=10,
                  front_channels=32, residual_channels=64, gate_channels=32, skip_channels=None,
-                 kernel_size=3, cin_channels=80, causal=True):
+                 kernel_size=3, cout_channels=128, causal=True):
         super(Wavenet_Flow, self). __init__()
 
         self.causal = causal
@@ -88,7 +106,7 @@ class Wavenet_Flow(nn.Module):
         self.gate_channels = gate_channels
         self.residual_channels = residual_channels
         self.skip_channels = skip_channels
-        self.cin_channels = cin_channels
+        self.cout_channels = cout_channels
         self.kernel_size = kernel_size
 
         self.front_conv = nn.Sequential(
@@ -101,7 +119,7 @@ class Wavenet_Flow(nn.Module):
             for n in range(self.num_layers):
                 self.res_blocks.append(ResBlock(self.residual_channels, self.gate_channels, self.skip_channels,
                                                 self.kernel_size, dilation=2**n,
-                                                cin_channels=self.cin_channels, local_conditioning=True,
+                                                cout_channels=self.cout_channels, local_conditioning=True,
                                                 causal=self.causal, mode='SAME'))
         self.final_conv = nn.Sequential(
             nn.ReLU(),

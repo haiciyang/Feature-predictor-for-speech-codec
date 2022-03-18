@@ -35,11 +35,13 @@ def build_model(cfg):
     model = Wavenet(out_channels=2,
                     num_blocks=cfg['num_blocks'],
                     num_layers=cfg['num_layers'],
+                    inp_channels=cfg['inp_channels'],
                     residual_channels=cfg['residual_channels'],
                     gate_channels=cfg['gate_channels'],
                     skip_channels=cfg['skip_channels'],
                     kernel_size=cfg['kernel_size'],
                     cin_channels=cfg['cin_channels'],
+                    cout_channels=cfg['cout_channels'],
                     upsample_scales=[10, 16],
                     local=cfg['local'])
     return model
@@ -73,12 +75,12 @@ def synthesis(cfg):
         test_dataset = Libri_lpc_data('val', tot_chunks)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True, num_workers=0, pin_memory=True)
     
-    for ns, (x, y, c) in enumerate(test_loader):
+    for ns, (x, c) in enumerate(test_loader):
         if ns < cfg['num_samples']:
             
             # ----- Load and prepare data ----
             x = x.to(torch.float).to(device) # (1, 1, tot_chunks*2400)
-            y = y.to(torch.float).to(device) # (1, 1, tot_chunks*2400)
+            # y = y.to(torch.float).to(device) # (1, 1, tot_chunks*2400)
             
             if cfg['cin_channels'] == 20:
                 feat = c[:, 2:-2, :-16].to(torch.float).to(device) # (1, tot*15, 20)
@@ -96,7 +98,7 @@ def synthesis(cfg):
 #             sf.write(wav_lpc_name, lpc_wav/max(abs(lpc_wav)), 16000, 'PCM_16')
             
             # Save ground truth
-            wav = torch.reshape(y, (y.shape[0]*y.shape[2],)).squeeze().cpu().numpy()
+            wav = torch.reshape(x[:,:,1:], (-1,1)).squeeze().cpu().numpy()
             wav_truth_name = 'samples/{}/{}_{}_{}_truth.wav'.format(model_label, cfg['note'], cfg['epoch'], ns)
 
             sf.write(wav_truth_name, wav/max(abs(wav)), 16000, 'PCM_16')
@@ -116,25 +118,24 @@ def synthesis(cfg):
                 feat_sub = feat[i:i+1,:,:] # [1, 36, chunk*15]
                 lpc_sub = lpc[i:i+1, :, :] # [1, chunk*15, 16]
                 with torch.no_grad():
-                    y_sub_gen, pred_sub_gen = model.generate_lpc(cfg['chunks']*cfg['n_sample_seg'], lpc_sub, feat_sub) # pick one audio signal # (L,), (L,)
+                    y_sub_gen, pred_sub_gen = model.generate_lpc(cfg['chunks']*cfg['n_sample_seg'], lpc_sub, feat_sub, cfg['inp_channels']) # pick one audio signal # (L,), (L,)
                 y_gen.append(y_sub_gen)
                 pred_gen.append(pred_sub_gen)
 
                 torch.cuda.synchronize()
                 # break
             
-            exc_wav = torch.reshape(torch.cat(y_gen, 0), (1, -1)).squeeze().cpu().numpy()
+            y_wav = torch.reshape(torch.cat(y_gen, 0), (1, -1)).squeeze().cpu().numpy()
             pred_wav = torch.reshape(torch.cat(pred_gen, 0), (1, -1)).squeeze().cpu().numpy()
 
-            out_wav = pred_wav + exc_wav
             wav_name = 'samples/{}/{}_{}_{}.wav'.format(model_label,cfg['note'],  cfg['epoch'], ns)
             pred_name = 'samples/{}/{}_{}_{}_pred.wav'.format(model_label,cfg['note'],  cfg['epoch'], ns)
             
-            torch.save(exc_wav, 'samples/{}/{}_exc_out_{}.pt'.format(model_label, cfg['note'], str(ns)))
+            torch.save(y_wav, 'samples/{}/{}_exc_out_{}.pt'.format(model_label, cfg['note'], str(ns)))
             torch.save(pred_wav, 'samples/{}/{}_pred_out_{}.pt'.format(model_label, cfg['note'], str(ns)))
             
             # print(max(abs(pred_wav)))
-            sf.write(wav_name, out_wav/max(abs(out_wav)), 16000, 'PCM_16')
+            sf.write(wav_name, y_wav/max(abs(y_wav)), 16000, 'PCM_16')
             sf.write(pred_name, pred_wav/max(abs(pred_wav)), 16000, 'PCM_16')
             
             del y_gen

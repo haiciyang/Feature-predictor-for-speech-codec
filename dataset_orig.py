@@ -70,7 +70,7 @@ class Libri_lpc_data_orig(Dataset):
         x = x.unsqueeze(0) #(1, 2400)
         # feat - (N, 36)
         
-        return x, x, feat
+        return x, feat
         
         
         

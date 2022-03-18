@@ -35,11 +35,11 @@ class Conv(nn.Module):
 
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, skip_channels, kernel_size, dilation,
-                 cin_channels=None, local_conditioning=True, causal=False, mode='SAME'):
+                 cout_channels=None, local_conditioning=True, causal=False, mode='SAME'):
         super(ResBlock, self).__init__()
         self.causal = causal
         self.local_conditioning = local_conditioning
-        self.cin_channels = cin_channels
+        self.cout_channels = cout_channels
         self.mode = mode
 
         self.filter_conv = Conv(in_channels, out_channels, kernel_size, dilation, causal, mode)
@@ -52,8 +52,8 @@ class ResBlock(nn.Module):
         nn.init.kaiming_normal_(self.skip_conv.weight)
 
         if self.local_conditioning:
-            self.filter_conv_c = nn.Conv1d(cin_channels, out_channels, kernel_size=1)
-            self.gate_conv_c = nn.Conv1d(cin_channels, out_channels, kernel_size=1)
+            self.filter_conv_c = nn.Conv1d(cout_channels, out_channels, kernel_size=1)
+            self.gate_conv_c = nn.Conv1d(cout_channels, out_channels, kernel_size=1)
             self.filter_conv_c = nn.utils.weight_norm(self.filter_conv_c)
             self.gate_conv_c = nn.utils.weight_norm(self.gate_conv_c)
             nn.init.kaiming_normal_(self.filter_conv_c.weight)
