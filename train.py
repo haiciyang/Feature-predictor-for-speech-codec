@@ -45,7 +45,8 @@ def build_model(cfg):
                     cin_channels=cfg['cin_channels'],
                     cout_channels=cfg['cout_channels'],
                     upsample_scales=[10, 16],
-                    local=cfg['local'])
+                    local=cfg['local'],
+                    fat_upsampler=cfg['fat_upsampler'])
     return model
 
 
@@ -72,7 +73,7 @@ def build_model(cfg):
 #     return feat
 
 
-def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_channels, inp_channels):
+def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_channels, inp_channels, stft_loss):
 
     epoch_loss = 0.
     start_time = time.time()
@@ -91,7 +92,6 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         x = x.to(torch.float).to(device)
         # y = y.to(torch.float).to(device)
 
-        
         if cin_channels == 20:
             feat = torch.transpose(c[:, 2:-2, :-16], 1,2).to(torch.float).to(device) # (bt, 20, 15)
         else:
@@ -112,41 +112,20 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         exc_hat = model(inp, feat) # (bt, 2, 2400) exc_hat_i+1
         # y_hat = model(x, feat) # (bt, 2, 2400)
         
-        if batch_idx == 0:
-            mean_y_hat = exc_hat[0, 0, :].detach().cpu().numpy()
-            plot_y = exc[0,0,:].detach().cpu().numpy()
-            
-            if not os.path.exists('samples/'+model_label):
-                os.mkdir('samples/'+model_label)
-                
-            Y_hat = 20*np.log10(
-                np.abs(librosa.feature.melspectrogram(
-                    mean_y_hat, sr=16000, n_fft=1024)))
-            plt.imshow(Y_hat, origin='lower', aspect='auto')
-            plt.savefig('samples/{}/exc_out_{}.jpg'.format(model_label, epoch))
-            plt.clf()
-            Y = 20*np.log10(
-                np.abs(librosa.feature.melspectrogram(
-                    plot_y, sr=16000, n_fft=1024)))
-            plt.imshow(Y, origin='lower', aspect='auto')
-            plt.savefig('samples/{}/exc_{}.jpg'.format(model_label, epoch))
-            plt.clf()
-        
         loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
-        
         del exc
-        
         exc_sample = utils.reparam_gaussian(exc_hat)
         del exc_hat
         
         x_hat = exc_sample + pred 
-        loss2 = mseloss(
-            utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
+        
+        loss2 = 0
+        if stft_loss:
+            loss2 = mseloss(
+                utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
         
         loss = loss1 + loss2
         loss.backward()
-        
-        # fake()
         
         nn.utils.clip_grad_norm_(model.parameters(), 10.)
         
@@ -154,6 +133,29 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
 
         epoch_loss += loss.item()
         display_loss += loss.item()
+        
+        if batch_idx == 0:
+
+            if not os.path.exists('samples/'+model_label):
+                os.mkdir('samples/'+model_label)
+            
+            torch.save(x_hat[0,0,:-1], 'samples/{}/x_out_{}.pt'.format(model_label, epoch))
+            torch.save(x[0,0,1:], 'samples/{}/x_{}.pt'.format(model_label, epoch))
+            
+            # mean_y_hat = exc_hat[0, 0, :].detach().cpu().numpy()
+            # plot_y = exc[0,0,:].detach().cpu().numpy()
+            # Y_hat = 20*np.log10(
+            #     np.abs(librosa.feature.melspectrogram(
+            #         mean_y_hat, sr=16000, n_fft=1024)))
+            # plt.imshow(Y_hat, origin='lower', aspect='auto')
+            # plt.savefig('samples/{}/exc_out_{}.jpg'.format(model_label, epoch))
+            # plt.clf()
+            # Y = 20*np.log10(
+            #     np.abs(librosa.feature.melspectrogram(
+            #         plot_y, sr=16000, n_fft=1024)))
+            # plt.imshow(Y, origin='lower', aspect='auto')
+            # plt.savefig('samples/{}/exc_{}.jpg'.format(model_label, epoch))
+            # plt.clf()
         
         if batch_idx % display_step == 0 and batch_idx != 0:
             display_end = time.time()
@@ -167,7 +169,7 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
 
     return epoch_loss / len(train_loader)
 
-def evaluate(model, test_loader, debugging, cin_channels, inp_channels):
+def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_loss):
 
     model.eval()
     epoch_loss = 0.
@@ -204,8 +206,11 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels):
         del exc_hat
         
         x_hat = exc_sample + pred 
-        loss2 = mseloss(
-            utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
+        
+        loss2 = 0
+        if stft_loss:
+            loss2 = mseloss(
+                utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
         
         loss = loss1 + loss2
         
@@ -261,10 +266,10 @@ def run(cfg, model_label):
         
         start = time.time()
         
-        train_epoch_loss = train(model, optimizer, train_loader, epoch, model_label, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'])
+        train_epoch_loss = train(model, optimizer, train_loader, epoch, model_label, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'], cfg['stft_loss'])
         
         with torch.no_grad():
-            test_epoch_loss = evaluate(model, test_loader, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'])
+            test_epoch_loss = evaluate(model, test_loader, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'], cfg['stft_loss'])
             
         end = time.time()
         duration = end-start

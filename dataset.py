@@ -21,6 +21,7 @@ class Libri_lpc_data(Dataset):
         elif task == 'val':
             path = '/media/sdb1/Data/libri_lpc_pt/val/*_in_data.pt'
         
+        self.task = task
         self.files = glob.glob(path)
         self.chunks = chunks
         
@@ -44,6 +45,8 @@ class Libri_lpc_data(Dataset):
            
         nb_frames = len(in_data)
         
+        if self.task == 'val':
+            np.random.seed(0)
         i = np.random.choice(nb_frames-self.chunks)
         
         while 1:

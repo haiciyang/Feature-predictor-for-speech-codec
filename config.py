@@ -32,7 +32,7 @@ def my_config():
             # Model
             'n_mels': None, 
             'num_blocks': 2,
-            'num_layers': 5,
+            'num_layers': 10,
             'inp_channels': 1,
             'residual_channels': 128,
             'gate_channels': 256,
@@ -42,6 +42,8 @@ def my_config():
             'cout_channels': 128,
             'num_workers': 2,
             'local': False,
+            'fat_upsampler': True,
+            'stft_loss': True,
 
             'debugging': False,    
         
