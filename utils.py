@@ -19,16 +19,16 @@ scale_1 = 32768.0/255.0
 def l2u(x):
     s = torch.sign(x)
     x = torch.abs(x)
-    u = s*(128*K.log(1+scale*x)/K.log(256.0))
-    u = K.clip(128 + u, 0, 255)
+    u = s * (128 * torch.log(1 + scale * x) / np.log(256.0))
+    u = torch.clip(128 + u, 0, 255)
     return u
 
-def tf_u2l(u):
-    u = tf.cast(u,"float32")
+def u2l(u):
+    u = u.to(torch.float32)
     u = u - 128.0
-    s = K.sign(u)
-    u = K.abs(u)
-    return s*scale_1*(K.exp(u/128.*K.log(256.0))-1)
+    s = torch.sign(u)
+    u = torch.abs(u)
+    return s * scale_1 * (torch.exp(u / 128.* np.log(256.0))-1)
 
 def sample_from_gaussian(y_hat):
     assert y_hat.size(1) == 2

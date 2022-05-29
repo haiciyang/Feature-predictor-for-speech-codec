@@ -34,6 +34,7 @@ def my_config():
             'num_blocks': 2,
             'num_layers': 10,
             'inp_channels': 1,
+            'out_channels': 2, 
             'residual_channels': 128,
             'gate_channels': 256,
             'skip_channels': 128, 

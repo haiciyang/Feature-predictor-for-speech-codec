@@ -40,8 +40,10 @@ class Libri_lpc_data(Dataset):
         features = torch.load(f + '_features.pt') # (nb_frames, 19, 36)
         
         max_d = max(torch.abs(in_data).max(), torch.abs(out_data).max())
-        in_data = in_data/(max_d+eps) * 0.999 # (2400, 1)
-        out_data = out_data/(max_d+eps) * 0.999 # (2400, 1)
+        
+        # Not normalize the data if using mu-law
+        # in_data = in_data/(max_d+eps) * 0.999 # (2400, 1)
+        # out_data = out_data/(max_d+eps) * 0.999 # (2400, 1)
            
         nb_frames = len(in_data)
         

@@ -49,7 +49,9 @@ class Wavenet(nn.Module):
             nn.ReLU(),
             Conv(self.skip_channels, self.skip_channels, 1, causal=self.causal),
             nn.ReLU(),
-            Conv(self.skip_channels, self.out_channels, 1, causal=self.causal)
+            Conv(self.skip_channels, self.out_channels, 1, causal=self.causal), 
+            nn.Softmax(dim=1) # For using mu-law
+            
         )
         
         if self.fat_upsampler:
@@ -74,15 +76,17 @@ class Wavenet(nn.Module):
             nn.init.kaiming_normal_(convt.weight)
             self.upsample_conv.append(convt)
             self.upsample_conv.append(nn.LeakyReLU(0.4))
+            
+        self.embedding = nn.Embedding(256, 64)
 
-    def forward(self, x, c):
+    def forward(self, x, periods, c):
         
         if not self.local:
-            c = self.upsample(c)
+            cfeat = self.upsample(c, periods)
         else:
-            c = torch.repeat_interleave(c, 160, dim=-1)
+            cfeat = torch.repeat_interleave(c, 160, dim=-1)
 
-        out = self.wavenet(x, c)
+        out = self.wavenet(x, cfeat)
         return out
 
 #     def generate_lpc(self, x, exc, c, lpc, inp_channels,):
@@ -200,20 +204,25 @@ class Wavenet(nn.Module):
         x_left.zero_()
         return torch.cat((x_right, x_left), dim=2)
 
-    def upsample(self, c):
+    def upsample(self, c, periods):
+        
+        emb_p = self.embedding(periods) # (bt, L, 1, 64)
+        emb_p = torch.transpose(emb_p[:,:,0,:], 1, 2) # (bt, 64, L) 
+        
+        cfeat = torch.cat((c, emb_p), 1) # (bt, 64+C, L)
         
         if self.fat_upsampler:
-            c = torch.transpose(self.c_conv(c), 1, 2) # (bt, L, C)
-            c = torch.transpose(self.c_fc(c), 1, 2) # (br, C, L) 
+            cfeat = torch.transpose(self.c_conv(cfeat), 1, 2) # (bt, L, C)
+            cfeat = torch.transpose(self.c_fc(cfeat), 1, 2) # (br, C, L) 
         
         if self.upsample_conv is not None:
             # B x 1 x C x T'
-            c = c.unsqueeze(1)
+            cfeat = cfeat.unsqueeze(1)
             for f in self.upsample_conv:
-                c = f(c)
+                cfeat = f(cfeat)
             # B x C x T
-            c = c.squeeze(1)
-        return c
+            cfeat = cfeat.squeeze(1)
+        return cfeat
 
     def wavenet(self, tensor, c=None):
         

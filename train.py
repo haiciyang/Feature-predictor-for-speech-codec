@@ -31,10 +31,11 @@ device = torch.device("cuda" if use_cuda else "cpu")
 
 criterion = GaussianLoss()
 mseloss = nn.MSELoss()
+crossentropy = nn.CrossEntropyLoss()
 
 @ex.capture
 def build_model(cfg):
-    model = Wavenet(out_channels=2,
+    model = Wavenet(out_channels=cfg['out_channels'],
                     num_blocks=cfg['num_blocks'],
                     num_layers=cfg['num_layers'],
                     inp_channels=cfg['inp_channels'],
@@ -42,7 +43,7 @@ def build_model(cfg):
                     gate_channels=cfg['gate_channels'],
                     skip_channels=cfg['skip_channels'],
                     kernel_size=cfg['kernel_size'],
-                    cin_channels=cfg['cin_channels'],
+                    cin_channels=cfg['cin_channels']+64,
                     cout_channels=cfg['cout_channels'],
                     upsample_scales=[10, 16],
                     local=cfg['local'],
@@ -98,33 +99,42 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
             feat = torch.transpose(c[:, 2:-2, :], 1,2).to(torch.float).to(device) # (bt, 20, 15)
         lpc = c[:, 2:-2, -16:].to(torch.float).to(device) # (bt, 15, 16) 
         
-        pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
+        periods = (.1 + 50*c[:,2:-2,18:19]+100).to(torch.int32).to(device)
         
+        
+        pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
         exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
         
         # x_i, exc_i, pred_i+1
         if inp_channels == 1:
-            inp = x
+            inp = utils.l2u(x)
         elif inp_channels == 3:
-            inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
+            inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
         
         optimizer.zero_grad()
-        exc_hat = model(inp, feat) # (bt, 2, 2400) exc_hat_i+1
+        exc_hat = model(inp, periods, feat) # (bt, 2, 2400) exc_hat_i+1
+        # print(exc.shape, exc_hat.shape)
+        # print(utils.l2u(exc).shape)
+        # fake()
         # y_hat = model(x, feat) # (bt, 2, 2400)
         
-        loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
-        del exc
-        exc_sample = utils.reparam_gaussian(exc_hat)
-        del exc_hat
+#         loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
+#         del exc
+#         exc_sample = utils.reparam_gaussian(exc_hat)
+#         del exc_hat
         
-        x_hat = exc_sample + pred 
+#         x_hat = exc_sample + pred 
         
-        loss2 = 0
-        if stft_loss:
-            loss2 = mseloss(
-                utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
+#         loss2 = 0
+#         if stft_loss:
+#             loss2 = mseloss(
+#                 utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
         
-        loss = loss1 + loss2
+#         loss = loss1 + loss2
+
+        loss = crossentropy(exc_hat[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))  # (input, target)
+        # sparse cross entropy
+    
         loss.backward()
         
         nn.utils.clip_grad_norm_(model.parameters(), 10.)
@@ -134,13 +144,13 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         epoch_loss += loss.item()
         display_loss += loss.item()
         
-        if batch_idx == 0:
+        # if batch_idx == 0:
 
-            if not os.path.exists('samples/'+model_label):
-                os.mkdir('samples/'+model_label)
+#             if not os.path.exists('samples/'+model_label):
+#                 os.mkdir('samples/'+model_label)
             
-            torch.save(x_hat[0,0,:-1], 'samples/{}/x_out_{}.pt'.format(model_label, epoch))
-            torch.save(x[0,0,1:], 'samples/{}/x_{}.pt'.format(model_label, epoch))
+#             torch.save(x_hat[0,0,:-1], 'samples/{}/x_out_{}.pt'.format(model_label, epoch))
+#             torch.save(x[0,0,1:], 'samples/{}/x_{}.pt'.format(model_label, epoch))
             
             # mean_y_hat = exc_hat[0, 0, :].detach().cpu().numpy()
             # plot_y = exc[0,0,:].detach().cpu().numpy()
@@ -184,37 +194,41 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
             feat = torch.transpose(c[:, 2:-2, :], 1,2).to(torch.float).to(device) # (bt, 20, 15)
         lpc = c[:, 2:-2, -16:].to(torch.float).to(device) # (bt, 15, 16) 
         
+        periods = (.1 + 50*c[:,2:-2,18:19]+100).to(torch.int32).to(device)
+        
         pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
             
         exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
         # exc = x[:,:,1:] - pred[:,:,:-1]
         
         if inp_channels == 1:
-            inp = x
+            inp = utils.l2u(x)
         elif inp_channels == 3:
-            inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
-        exc_hat = model(inp, feat) # (bt, 2, 2400)
+            inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
+            
+        exc_hat = model(inp, periods, feat) # (bt, 2, 2400)
         
         nn.utils.clip_grad_norm_(model.parameters(), 10.)
         
-        loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
+        # loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
+
+#         exc_sample = utils.reparam_gaussian(exc_hat)
         
-        del exc
+#         x_hat = exc_sample + pred 
         
-        exc_sample = utils.reparam_gaussian(exc_hat)
+# #         loss2 = 0
+# #         if stft_loss:
+# #             loss2 = mseloss(
+# #                 utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
         
-        del exc_hat
+#         loss = loss1 + loss2
         
-        x_hat = exc_sample + pred 
-        
-        loss2 = 0
-        if stft_loss:
-            loss2 = mseloss(
-                utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
-        
-        loss = loss1 + loss2
+        loss = crossentropy(exc_hat[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))
         
         epoch_loss += loss
+        
+        del exc_hat
+        del exc
         
         if debugging:
             break
