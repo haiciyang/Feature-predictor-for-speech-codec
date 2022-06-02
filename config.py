@@ -19,6 +19,7 @@ def my_config():
             'sr': 16000,
             'n_sample_seg': 2400, 
             'n_seg': 15, 
+            'orig': True,
             
             # Training
             'epochs': 1000,
@@ -54,7 +55,7 @@ def my_config():
             'model_label': None,
             'epoch': None,
             'note': '',
-            'orig': True,
+            
     }
     
     model_label = time.strftime("%m%d_%H%M%S")

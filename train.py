@@ -74,6 +74,21 @@ def build_model(cfg):
 #     return feat
 
 
+def sample_mu_prob(p, feat):
+    
+    feat = np.repeat(feat[0, 19, :], 160) # (bt, 1, L)
+    p *= np.power(p, np.maximum(0, 1.5*feat - .5))
+    p = p/(1e-18 + np.sum(p))
+    #Cut off the tail of the remaining distribution
+    p = np.maximum(p-0.002, 0).astype('float64')
+    p = p/(1e-8 + np.sum(p)) # (256, L)
+
+    exc_out_u = np.argmax(p, 0)
+    
+    assert p.shape[-1] == exc_out_u.shape[-1]
+    
+    return exc_out_u
+
 def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_channels, inp_channels, stft_loss):
 
     epoch_loss = 0.
@@ -109,7 +124,8 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         if inp_channels == 1:
             inp = utils.l2u(x)
         elif inp_channels == 3:
-            inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
+            # inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
+            inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
         
         optimizer.zero_grad()
         exc_hat = model(inp, periods, feat) # (bt, 2, 2400) exc_hat_i+1
@@ -118,21 +134,21 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         # fake()
         # y_hat = model(x, feat) # (bt, 2, 2400)
         
-#         loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
+        loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
 #         del exc
 #         exc_sample = utils.reparam_gaussian(exc_hat)
 #         del exc_hat
         
 #         x_hat = exc_sample + pred 
         
-#         loss2 = 0
+        loss2 = 0
 #         if stft_loss:
 #             loss2 = mseloss(
 #                 utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
         
-#         loss = loss1 + loss2
+        loss = loss1 + loss2
 
-        loss = crossentropy(exc_hat[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))  # (input, target)
+        # loss = crossentropy(exc_prob[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))  # (input, target)
         # sparse cross entropy
     
         loss.backward()
@@ -144,28 +160,36 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         epoch_loss += loss.item()
         display_loss += loss.item()
         
-        # if batch_idx == 0:
+        if batch_idx == 0:
 
-#             if not os.path.exists('samples/'+model_label):
-#                 os.mkdir('samples/'+model_label)
+            if not os.path.exists('samples/'+model_label):
+                os.mkdir('samples/'+model_label)
             
-#             torch.save(x_hat[0,0,:-1], 'samples/{}/x_out_{}.pt'.format(model_label, epoch))
-#             torch.save(x[0,0,1:], 'samples/{}/x_{}.pt'.format(model_label, epoch))
+            # torch.save(x_hat[0,0,:-1], 'samples/{}/x_out_{}.pt'.format(model_label, epoch))
+            # torch.save(x[0,0,1:], 'samples/{}/x_{}.pt'.format(model_label, epoch))
             
             # mean_y_hat = exc_hat[0, 0, :].detach().cpu().numpy()
-            # plot_y = exc[0,0,:].detach().cpu().numpy()
+            # exc_out = sample_mu_prob(exc_hat[0,:,:].detach().cpu().numpy(), feat.detach().cpu().numpy())
+            # print(exc_out.shape)
+            # exc_hat = exc[0,0,:].detach().cpu().numpy()
+            
             # Y_hat = 20*np.log10(
             #     np.abs(librosa.feature.melspectrogram(
             #         mean_y_hat, sr=16000, n_fft=1024)))
+            
             # plt.imshow(Y_hat, origin='lower', aspect='auto')
-            # plt.savefig('samples/{}/exc_out_{}.jpg'.format(model_label, epoch))
-            # plt.clf()
+            plt.plot(exc_hat[0,0,:].detach().cpu().numpy())
+            plt.savefig('samples/{}/exc_out_{}.jpg'.format(model_label, epoch))
+            plt.clf()
+            
             # Y = 20*np.log10(
             #     np.abs(librosa.feature.melspectrogram(
-            #         plot_y, sr=16000, n_fft=1024)))
+            #         plot_y, sr=160_00, n_fft=1024)))
+            
             # plt.imshow(Y, origin='lower', aspect='auto')
-            # plt.savefig('samples/{}/exc_{}.jpg'.format(model_label, epoch))
-            # plt.clf()
+            plt.plot(exc[0,0,:].detach().cpu().numpy())
+            plt.savefig('samples/{}/exc_{}.jpg'.format(model_label, epoch))
+            plt.clf()
         
         if batch_idx % display_step == 0 and batch_idx != 0:
             display_end = time.time()
@@ -204,26 +228,27 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
         if inp_channels == 1:
             inp = utils.l2u(x)
         elif inp_channels == 3:
-            inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
+            # inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
+            inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
             
         exc_hat = model(inp, periods, feat) # (bt, 2, 2400)
         
         nn.utils.clip_grad_norm_(model.parameters(), 10.)
         
-        # loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
+        loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
 
 #         exc_sample = utils.reparam_gaussian(exc_hat)
         
 #         x_hat = exc_sample + pred 
         
-# #         loss2 = 0
+        loss2 = 0
 # #         if stft_loss:
 # #             loss2 = mseloss(
 # #                 utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
         
-#         loss = loss1 + loss2
+        loss = loss1 + loss2
         
-        loss = crossentropy(exc_hat[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))
+        # loss = crossentropy(exc_hat[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))
         
         epoch_loss += loss
         

@@ -94,7 +94,8 @@ def lpc_pred(cfg, x, lpc, N=None, n_repeat = None):
     # lpc - (bt, 15, 16)
     # N - number of 2400 segments
     
-    N = cfg['chunks']*2400 if N is None else N
+    # N = cfg['chunks']*2400 if N is None else N
+    N = x.shape[-1]
     n_repeat = cfg['frame_size'] if n_repeat is None else n_repeat
     
     lpc_N = cfg['lpcoeffs_N']

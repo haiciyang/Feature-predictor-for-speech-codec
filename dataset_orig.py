@@ -27,6 +27,8 @@ class Libri_lpc_data_orig(Dataset):
         self.files = glob.glob(path)
         self.chunks = chunks
         
+        print('Using original data')
+        
     def __len__(self):
         
         return len(self.files)

@@ -25,6 +25,8 @@ class Libri_lpc_data(Dataset):
         self.files = glob.glob(path)
         self.chunks = chunks
         
+        print('Using processed data')
+        
     def __len__(self):
         
         return len(self.files)
@@ -36,12 +38,12 @@ class Libri_lpc_data(Dataset):
         f = self.files[idx][:-11] 
         
         in_data = torch.load(f + '_in_data.pt')  # (nb_frames, 2400, 1)
-        out_data = torch.load(f + '_out_data.pt') # (nb_frames, 2400, 1)
+        # out_data = torch.load(f + '_out_data.pt') # (nb_frames, 2400, 1)
         features = torch.load(f + '_features.pt') # (nb_frames, 19, 36)
         
-        max_d = max(torch.abs(in_data).max(), torch.abs(out_data).max())
-        
         # Not normalize the data if using mu-law
+        # print('Normalizing data')
+        # max_d = torch.abs(in_data).max()#, torch.abs(out_data).max())
         # in_data = in_data/(max_d+eps) * 0.999 # (2400, 1)
         # out_data = out_data/(max_d+eps) * 0.999 # (2400, 1)
            
@@ -53,16 +55,20 @@ class Libri_lpc_data(Dataset):
         
         while 1:
             x = torch.reshape(in_data[i:i+self.chunks], (1, self.chunks*2400))
-            y = torch.reshape(out_data[i:i+self.chunks], (1, self.chunks*2400))
+            # y = torch.reshape(out_data[i:i+self.chunks], (1, self.chunks*2400))
             mid_feat = torch.reshape(features[i:i+self.chunks, 2:-2, :], 
                                      (self.chunks*15, -1)) # [n*15, 36]
             feat = torch.cat([features[i,:2, :], mid_feat, features[i+self.chunks-1,-2:, :]], 0)
-            if torch.abs(x).max() == 0 or torch.abs(y).max() == 0 or torch.sum(torch.isnan(feat)) != 0:
+            # if torch.abs(x).max() == 0 or torch.abs(y).max() == 0 or torch.sum(torch.isnan(feat)) != 0:
+            if torch.abs(x).max() == 0 or torch.sum(torch.isnan(feat)) != 0:
                 i = np.random.choice(nb_frames-self.chunks)
             else:
                 break
-        
-        return x, y, feat
+                
+        # print(x.shape)
+        # print(feat.shape)
+        # return x, y, feat
+        return x, feat
         
         
         

@@ -49,6 +49,15 @@ def build_model(cfg):
                     fat_upsampler=cfg['fat_upsampler'])
     return model
 
+
+@ex.capture
+def saveaudio(cfg, wave, tp, ns):
+    
+    out_wav = wave.flatten().squeeze().cpu().numpy()
+    wav_name = 'samples/{}/{}_{}_{}_{}.wav'.format(cfg['model_label'], cfg['note'], cfg['epoch'], tp, str(ns))
+    torch.save(out_wav, 'samples/{}/{}_{}_{}.pt'.format(cfg['model_label'], cfg['note'], tp, str(ns)))
+    sf.write(wav_name, out_wav/max(abs(out_wav)), 16000, 'PCM_16')
+
 @ex.automain
 def synthesis(cfg):
     # 3s speech
@@ -77,13 +86,14 @@ def synthesis(cfg):
         test_dataset = Libri_lpc_data_orig('val', tot_chunks) 
     else:
         test_dataset = Libri_lpc_data('val', tot_chunks)
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0, pin_memory=True)
+        
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True, num_workers=0, pin_memory=True)
     
-    for ns, (x, c) in enumerate(test_loader):
+    for ns, (sample, c) in enumerate(test_loader):
         if ns < cfg['num_samples']:
             
             # ----- Load and prepare data ----
-            x = x.to(torch.float).to(device) # (1, 1, tot_chunks*2400)
+            sample = sample.to(torch.float).to(device) # (1, 1, tot_chunks*2400)
             # y = y.to(torch.float).to(device) # (1, 1, tot_chunks*2400)
             
             if cfg['cin_channels'] == 20:
@@ -92,25 +102,16 @@ def synthesis(cfg):
                 feat = c[:, 2:-2, :].to(torch.float).to(device) 
             lpc = c[:, 2:-2, -16:].to(torch.float).to(device) # (1, tot*15, 16) 
             
-            # ----- Save audio files ------
-#             pred = utils.lpc_pred(x=x, lpc=lpc, N=tot_chunks*cfg['n_sample_seg']) #(1, 1, tot_chunks*2400)
-#             # Save lpc_prediction
+            periods = (.1 + 50*c[:,2:-2,18:19]+100).to(torch.int32).to(device)
             
-#             lpc_wav = torch.reshape(pred, (pred.shape[0]*pred.shape[2],)).squeeze().cpu().numpy()
-#             # torch.save(lpc_wav, 'samples/{}/{}_pred_truth_{}.pt'.format(model_label, cfg['note'], str(ns)))
-            
-#             wav_lpc_name = 'samples/{}/{}_{}_{}_lpc.wav'.format(model_label, cfg['note'],cfg['epoch'], ns)
-            
-#             sf.write(wav_lpc_name, lpc_wav/max(abs(lpc_wav)), 16000, 'PCM_16')
-            
-#             fake()
+            lpc_sample = torch.repeat_interleave(lpc, 160, dim=1) # (bt, tot_chunks*2400, 16)
+            # pred = utils.lpc_pred(x=x, lpc=lpc_sample, n_repeat=1) #(1, 1, tot_chunks*2400)
+           
+            # saveaudio(pred, 'lpc', ns)
             
             # Save ground truth
-            wav = torch.reshape(x[:,:,1:], (-1,1)).squeeze().cpu().numpy()
-            wav_truth_name = 'samples/{}/{}_{}_{}_truth.wav'.format(model_label, cfg['note'], cfg['epoch'], ns)
-            # torch.save(wav, 'samples/{}/{}_wav_truth_{}.pt'.format(model_label, cfg['note'], str(ns)))
-
-            sf.write(wav_truth_name, wav/max(abs(wav)), 16000, 'PCM_16')
+            saveaudio(wave=sample, tp='truth', ns=ns)
+            
             
             torch.cuda.synchronize()
             
@@ -132,21 +133,12 @@ def synthesis(cfg):
             sub_length = cfg['chunks'] * cfg['n_sample_seg']
             
             if not cfg['local']:
+                # c_upsampled = model.upsample(feat, periods)
                 c_upsampled = model.upsample(feat)
             else:
                 c_upsampled = torch.repeat_interleave(feat, 160, dim=-1)
 
-#             for nf in range(len(feat)):
-#                 # x_sub = x[i:i+1,:,:]       # [1, 1, chunk*1024]
-#                 feat_sub = feat[nf:nf+1,:,:] # [1, 36, chunk*15]
-#                 lpc_sub = lpc[nf:nf+1, :, :] # [1, chunk*15, 16]
-
             for i in tqdm(range(tot_length)):
-                # if (i+1) % 1000 == 0:
-                #     torch.cuda.synchronize()
-                #     timer_end = time.perf_counter()
-                #     print("generating {}-th sample: {:.4f} samples per second..".format(i+1, 1000/(timer_end - timer)))
-                #     timer = time.perf_counter()
 
                 if i >= rf_size:
                     start_idx = i - rf_size + 1
@@ -158,9 +150,11 @@ def synthesis(cfg):
                 i_rf = min(i+1, rf_size)            
                 x_in = x[:, :, -i_rf:]
 
-                lpc_coef = lpc[:,i // 160,:].unsqueeze(1) #(bt, 1, 16)
+#                 lpc_coef = lpc[:,i // 160,:].unsqueeze(1) #(bt, 1, 16)
+#                 pred_in = utils.lpc_pred(x=x_in, lpc=lpc_coef, N=i_rf, n_repeat=i_rf)
 
-                pred_in = utils.lpc_pred(x=x_in, lpc=lpc_coef, N=i_rf, n_repeat=i_rf)
+                lpc_coef = lpc_sample[:, start_idx:i + 1, :]
+                pred_in = utils.lpc_pred(x=x_in, lpc=lpc_coef, n_repeat=1)
 
                 if cfg['inp_channels'] == 1:
                     x_inp = x_in
@@ -174,6 +168,7 @@ def synthesis(cfg):
 
                 x = torch.roll(x, shifts=-1, dims=2)
                 x[:, :, -1] = exc_out + pred_in[:,:,-1]
+                # print(x[:, :, -1])
                 exc = torch.roll(exc, shifts=-1, dims=2)
                 exc[:, :, -1] = exc_out
                 pred[:, :, i+1] = pred_in[:,:,-1]
@@ -181,24 +176,10 @@ def synthesis(cfg):
 
                 torch.cuda.synchronize()
 
-            x_name = 'samples/{}/{}_{}_{}_x.wav'.format(model_label,cfg['note'],  cfg['epoch'], ns)
-            wav_name = 'samples/{}/{}_{}_{}.wav'.format(model_label,cfg['note'],  cfg['epoch'], ns)
-            pred_name = 'samples/{}/{}_{}_{}_pred.wav'.format(model_label,cfg['note'],  cfg['epoch'], ns)
-            exc_name = 'samples/{}/{}_{}_{}_exc.wav'.format(model_label,cfg['note'],  cfg['epoch'], ns)
-            
-            torch.save(x_out, 'samples/{}/{}_wav_out_{}.pt'.format(model_label, cfg['note'], str(ns)))
-            torch.save(pred, 'samples/{}/{}_pred_out_{}.pt'.format(model_label, cfg['note'], str(ns)))
-            torch.save(exc, 'samples/{}/{}_exc_out_{}.pt'.format(model_label, cfg['note'], str(ns)))
-            
-            x = x.cpu().data.numpy().squeeze()
-            x_out = x_out.cpu().data.numpy().squeeze()
-            pred = pred.cpu().data.numpy().squeeze()
-            exc = exc.cpu().data.numpy().squeeze()
-            
-            sf.write(x_name, x/max(abs(x)), 16000, 'PCM_16')
-            sf.write(wav_name, x_out/max(abs(x_out)), 16000, 'PCM_16')
-            sf.write(pred_name, pred/max(abs(pred)), 16000, 'PCM_16')
-            sf.write(exc_name, exc/max(abs(exc)), 16000, 'PCM_16')
+            saveaudio(wave=x[:,:,1:], tp='xin', ns=ns)    
+            saveaudio(wave=x_out[:,:,1:], tp='xout', ns=ns)    
+            saveaudio(wave=pred[:,:,1:], tp='pred', ns=ns)    
+            saveaudio(wave=exc[:,:,1:], tp='exc', ns=ns)    
             
 
 
