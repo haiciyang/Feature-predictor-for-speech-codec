@@ -29,7 +29,7 @@ np.set_printoptions(precision=4)
 use_cuda = torch.cuda.is_available()
 device = torch.device("cuda" if use_cuda else "cpu")
 
-criterion = GaussianLoss()
+gaussianloss = GaussianLoss()
 mseloss = nn.MSELoss()
 crossentropy = nn.CrossEntropyLoss()
 
@@ -122,33 +122,25 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         
         # x_i, exc_i, pred_i+1
         if inp_channels == 1:
-            inp = utils.l2u(x)
+            # inp = utils.l2u(x)
+            inp = x
         elif inp_channels == 3:
             # inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
             inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
         
         optimizer.zero_grad()
-        exc_hat = model(inp, periods, feat) # (bt, 2, 2400) exc_hat_i+1
-        # print(exc.shape, exc_hat.shape)
-        # print(utils.l2u(exc).shape)
-        # fake()
-        # y_hat = model(x, feat) # (bt, 2, 2400)
+        exc_dist = model(inp, periods, feat) # (bt, 2, 2400) exc_hat_i+1
         
-        loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
-#         del exc
-#         exc_sample = utils.reparam_gaussian(exc_hat)
-#         del exc_hat
-        
-#         x_hat = exc_sample + pred 
-        
+        loss1 = criterion(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
         loss2 = 0
 #         if stft_loss:
+            
 #             loss2 = mseloss(
 #                 utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
         
         loss = loss1 + loss2
 
-        # loss = crossentropy(exc_prob[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))  # (input, target)
+        # loss = crossentropy(exc_dist[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))  # (input, target)
         # sparse cross entropy
     
         loss.backward()
@@ -226,29 +218,25 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
         # exc = x[:,:,1:] - pred[:,:,:-1]
         
         if inp_channels == 1:
-            inp = utils.l2u(x)
+            # inp = utils.l2u(x)
+            inp = x
         elif inp_channels == 3:
             # inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
             inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
             
-        exc_hat = model(inp, periods, feat) # (bt, 2, 2400)
+        exc_dist = model(inp, periods, feat) # (bt, 2, 2400)
         
-        nn.utils.clip_grad_norm_(model.parameters(), 10.)
-        
-        loss1 = criterion(exc_hat[:,:,:-1], exc[:,:,1:], size_average=True)
+        # nn.utils.clip_grad_norm_(model.parameters(), 10.)
 
-#         exc_sample = utils.reparam_gaussian(exc_hat)
-        
-#         x_hat = exc_sample + pred 
-        
+        loss1 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
         loss2 = 0
-# #         if stft_loss:
-# #             loss2 = mseloss(
-# #                 utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
+        # if stft_loss:
+        #     loss2 = mseloss(
+        #         utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
         
         loss = loss1 + loss2
         
-        # loss = crossentropy(exc_hat[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))
+        # loss = crossentropy(exc_dist[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))
         
         epoch_loss += loss
         

@@ -50,7 +50,7 @@ class Wavenet(nn.Module):
             Conv(self.skip_channels, self.skip_channels, 1, causal=self.causal),
             nn.ReLU(),
             Conv(self.skip_channels, self.out_channels, 1, causal=self.causal), 
-            nn.Tanh()
+            # nn.Tanh()
             # nn.Softmax(dim=1) # For using mu-law
             
         )

@@ -42,7 +42,7 @@ def build_model(cfg):
                     gate_channels=cfg['gate_channels'],
                     skip_channels=cfg['skip_channels'],
                     kernel_size=cfg['kernel_size'],
-                    cin_channels=cfg['cin_channels'],
+                    cin_channels=cfg['cin_channels']+64,
                     cout_channels=cfg['cout_channels'],
                     upsample_scales=[10, 16],
                     local=cfg['local'],
@@ -62,14 +62,11 @@ def saveaudio(cfg, wave, tp, ns):
 def synthesis(cfg):
     # 3s speech
     model_label = str(cfg['model_label'])
-    # model_label = str(cfg['model_label'])[:4] + '_' + str(cfg['model_label'])[4:]
     
     path = 'saved_models/'+ model_label + '/' + model_label + '_'+ str(cfg['epoch']) +'.pth'
     
     if not os.path.exists('samples/'+model_label):
         os.mkdir('samples/'+model_label)
-    
-    length = cfg['total_secs']*cfg['sr']
     
     model = build_model()
     print("Load checkpoint from: {}".format(path))
@@ -78,6 +75,7 @@ def synthesis(cfg):
 
     model.eval()
     
+    length = cfg['total_secs']*cfg['sr']
     tot_chunks = length//cfg['n_sample_seg']//cfg['chunks']*cfg['chunks']
     tot_length = tot_chunks * cfg['n_sample_seg']
     
@@ -87,7 +85,7 @@ def synthesis(cfg):
     else:
         test_dataset = Libri_lpc_data('val', tot_chunks)
         
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True, num_workers=0, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0, pin_memory=True)
     
     for ns, (sample, c) in enumerate(test_loader):
         if ns < cfg['num_samples']:
@@ -105,13 +103,17 @@ def synthesis(cfg):
             periods = (.1 + 50*c[:,2:-2,18:19]+100).to(torch.int32).to(device)
             
             lpc_sample = torch.repeat_interleave(lpc, 160, dim=1) # (bt, tot_chunks*2400, 16)
-            # pred = utils.lpc_pred(x=x, lpc=lpc_sample, n_repeat=1) #(1, 1, tot_chunks*2400)
+            pred1 = utils.lpc_pred(x=sample, lpc=lpc_sample, n_repeat=1) #(1, 1, tot_chunks*2400)
            
-            # saveaudio(pred, 'lpc', ns)
+            # pred2 = utils.lpc_pred(x=sample, lpc=lpc)
+            
+#             saveaudio(wave=pred1, tp='lpc1', ns=ns)
+#             saveaudio(wave=pred2, tp='lpc2', ns=ns)
+            
             
             # Save ground truth
             saveaudio(wave=sample, tp='truth', ns=ns)
-            
+            # continue
             
             torch.cuda.synchronize()
             
@@ -124,17 +126,15 @@ def synthesis(cfg):
             # ------ Initialize input array ------- 
             
             rf_size = model.receptive_field_size()
-            
+
             x = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))
             pred = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))
-            exc = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))
-            x_out = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))
-            
-            sub_length = cfg['chunks'] * cfg['n_sample_seg']
+            exc = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))   
+            x_out = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))   
             
             if not cfg['local']:
-                # c_upsampled = model.upsample(feat, periods)
-                c_upsampled = model.upsample(feat)
+                c_upsampled = model.upsample(feat, periods)
+                # c_upsampled = model.upsample(feat)
             else:
                 c_upsampled = torch.repeat_interleave(feat, 160, dim=-1)
 
