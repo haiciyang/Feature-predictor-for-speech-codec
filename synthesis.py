@@ -107,12 +107,13 @@ def synthesis(cfg):
            
             # pred2 = utils.lpc_pred(x=sample, lpc=lpc)
             
-#             saveaudio(wave=pred1, tp='lpc1', ns=ns)
+            # saveaudio(wave=pred1, tp='lpc1', ns=ns)
 #             saveaudio(wave=pred2, tp='lpc2', ns=ns)
             
             
             # Save ground truth
             saveaudio(wave=sample, tp='truth', ns=ns)
+            # fake()
             # continue
             
             torch.cuda.synchronize()
@@ -173,6 +174,7 @@ def synthesis(cfg):
                 exc[:, :, -1] = exc_out
                 pred[:, :, i+1] = pred_in[:,:,-1]
                 x_out[:, :, i+1] = 0.85 * x[:, :, -2] + x[:, :, -1]
+                # print(x[:, :, -1], exc_out, pred_in[:,:,-1])
 
                 torch.cuda.synchronize()
 

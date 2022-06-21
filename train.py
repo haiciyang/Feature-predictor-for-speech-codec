@@ -117,8 +117,8 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         periods = (.1 + 50*c[:,2:-2,18:19]+100).to(torch.int32).to(device)
         
         
-        pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
-        exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
+        # pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
+        # exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
         
         # x_i, exc_i, pred_i+1
         if inp_channels == 1:
@@ -131,7 +131,8 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         optimizer.zero_grad()
         exc_dist = model(inp, periods, feat) # (bt, 2, 2400) exc_hat_i+1
         
-        loss1 = criterion(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
+        # loss1 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
+        loss1 = gaussianloss(exc_dist[:,:,:-1], x[:,:,1:], size_average=True)
         loss2 = 0
 #         if stft_loss:
             
@@ -170,7 +171,8 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
             #         mean_y_hat, sr=16000, n_fft=1024)))
             
             # plt.imshow(Y_hat, origin='lower', aspect='auto')
-            plt.plot(exc_hat[0,0,:].detach().cpu().numpy())
+            exc_out = utils.sample_from_gaussian(exc_dist[0:1, :, :])
+            plt.plot(exc_out[0,:,0].detach().cpu().numpy())
             plt.savefig('samples/{}/exc_out_{}.jpg'.format(model_label, epoch))
             plt.clf()
             
@@ -179,7 +181,7 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
             #         plot_y, sr=160_00, n_fft=1024)))
             
             # plt.imshow(Y, origin='lower', aspect='auto')
-            plt.plot(exc[0,0,:].detach().cpu().numpy())
+            plt.plot(x[0,0,:].detach().cpu().numpy())
             plt.savefig('samples/{}/exc_{}.jpg'.format(model_label, epoch))
             plt.clf()
         
@@ -212,10 +214,9 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
         
         periods = (.1 + 50*c[:,2:-2,18:19]+100).to(torch.int32).to(device)
         
-        pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
+        # pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
             
-        exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
-        # exc = x[:,:,1:] - pred[:,:,:-1]
+        # exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
         
         if inp_channels == 1:
             # inp = utils.l2u(x)
@@ -228,7 +229,7 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
         
         # nn.utils.clip_grad_norm_(model.parameters(), 10.)
 
-        loss1 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
+        loss1 = gaussianloss(exc_dist[:,:,:-1], x[:,:,1:], size_average=True)
         loss2 = 0
         # if stft_loss:
         #     loss2 = mseloss(
@@ -240,8 +241,8 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
         
         epoch_loss += loss
         
-        del exc_hat
-        del exc
+        del exc_dist
+        # del exc
         
         if debugging:
             break

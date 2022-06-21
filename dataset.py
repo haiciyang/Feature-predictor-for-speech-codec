@@ -43,8 +43,8 @@ class Libri_lpc_data(Dataset):
         
         # Not normalize the data if using mu-law
         # print('Normalizing data')
-        # max_d = torch.abs(in_data).max()#, torch.abs(out_data).max())
-        # in_data = in_data/(max_d+eps) * 0.999 # (2400, 1)
+        max_d = torch.abs(in_data).max()#, torch.abs(out_data).max())
+        in_data = in_data/(max_d+eps) * 0.999 # (2400, 1)
         # out_data = out_data/(max_d+eps) * 0.999 # (2400, 1)
            
         nb_frames = len(in_data)

@@ -16,6 +16,7 @@ class Libri_lpc_data_orig(Dataset):
         
         # training - 28539
         # testing - 2703
+        # One "chunk" corresponds to 2400 samples, 15 frames
         
         if task == 'train':
             path = '/media/sdb1/Data/librispeech/train-clean-100/*/*/*.wav'
@@ -45,19 +46,23 @@ class Libri_lpc_data_orig(Dataset):
         in_data, sr = librosa.load(file_path, sr=None)
         in_data = in_data/max(np.abs(in_data).max(),eps) * 0.999 # (2400,)
         
-        features = torch.load(feature_path) # (19, 36)
-           
         nb_frames = len(in_data) // 2400
+        
+        features = torch.load(feature_path) # (19, 36)
         features = features[:nb_frames]
-        # print(in_data.shape)
-        while nb_frames <= self.chunks:
+        
+        if self.chunks == 0: # pass all the data to dataloader
+            self.chunks = nb_frames
+            
+        while nb_frames < self.chunks:
             in_data = np.hstack((in_data, in_data))
             features = torch.vstack((features, features))
             nb_frames *= 2
         
         # print(in_data.shape)
         in_data = torch.tensor(np.reshape(in_data[:len(in_data) // 2400 * 2400], (-1, 2400)))
-        i = np.random.choice(nb_frames-self.chunks)
+        
+        i = np.random.choice(nb_frames-self.chunks) if nb_frames > self.chunks else 0
         
         while 1:
             x = torch.reshape(in_data[i:i+self.chunks], (self.chunks*2400,))
