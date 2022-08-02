@@ -16,6 +16,7 @@ from torch.utils.data import Dataset, DataLoader
 
 import utils
 from wavenet import Wavenet
+from wavernn import Wavernn
 from dataset import Libri_lpc_data
 from ceps2lpc_vct import ceps2lpc_v
 from dataset_orig import Libri_lpc_data_orig
@@ -33,6 +34,8 @@ device = torch.device("cuda" if use_cuda else "cpu")
 gaussianloss = GaussianLoss()
 mseloss = nn.MSELoss()
 crossentropy = nn.CrossEntropyLoss()
+
+MAXI = 24.1
 
 @ex.capture
 def build_model(cfg):
@@ -90,8 +93,11 @@ def sample_mu_prob(p, feat):
     
     return exc_out_u
 
-def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_channels, inp_channels, stft_loss):
-
+def train(model_f, model_s, optimizer, train_loader, epoch, model_label, debugging, cin_channels, inp_channels, stft_loss):
+    
+    model_f.train()
+    model_s.train()
+    
     epoch_loss = 0.
     start_time = time.time()
     display_step = 500
@@ -103,54 +109,64 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
     for batch_idx, (x, c, nm_c) in enumerate(train_loader):
         
         # x - torch.Size([3, 1, 2400])
-        # y - torch.Size([3, 1, 2400])
         # c - torch.Size([3, 19, 36])
         
-        x = x.to(torch.float).to(device)
-        # y = y.to(torch.float).to(device)
-        e, lpc_c, rc = ceps2lpc_v(c[:, 2:-2, :].reshape(-1, c.shape[-1]))
-        lpc = lpc_c.reshape(c.shape[0], c.shape[1]-4, 16)
-        lpc = torch.tensor(lpc).to(torch.float).to(device)
-
+        # === Train frame-wise predictive coding ====
+        x = x[:, :, 160:].to(torch.float).to(device) # (bt, 1, T-160)
+         
+        
         if cin_channels == 20:
-            feat = torch.transpose(c[:, 2:-2, :-16], 1,2).to(torch.float).to(device) # (bt, 20, 15)
+            feat = c[:, 2:-2, :-16].to(torch.float).to(device) # (bt, 20, 15)
+            nm_feat = nm_c[:, 2:-2, :-16].to(torch.float).to(device) # (bt, 20, 15)
         else:
-            feat = torch.transpose(c[:, 2:-2, :], 1,2).to(torch.float).to(device) # (bt, 20, 15)
+            feat = c[:, 2:-2, :].to(torch.float).to(device) # (bt, 20, 15)
+            nm_feat = nm_c[:, 2:-2, :].to(torch.float).to(device) # (bt, 20, 15)
+            
+        nm_feat_out = model_f(nm_feat)[:, :-1, :]  # (B, L-1, C)
+        feat_out = MAXI * nm_feat_out # Scale back
         
-        # lpc = c[:, 2:-2, -16:].to(torch.float).to(device) # (bt, 15, 16) 
-        periods = (.1 + 50*c[:,2:-2,18:19]+100).to(torch.int32).to(device)
         
-        pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
-        exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
+        #  --- Get LPC coefficients and periods values from the predicted feat_out --- 
+        e, lpc_c, rc = ceps2lpc_v(feat_out.reshape(-1, feat_out.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
+        lpc = lpc_c.reshape(feat_out.shape[0], feat_out.shape[1], 16).to(device) # (N, L-1, 16)
+        
+        # periods = (.1 + feat_out[:,:,18:19]+100).to(torch.int32).to(device) # (bt, L-1, 1) 
+        # print(periods.flatten())
+        # print(lpc.shape, periods.shape)
+#     
+        feat_out = torch.transpose(feat_out, 1,2).to(device) # (bt, C, L-1)
+        
+        # lpc = c[:, 3:-2, -16:].to(torch.float).to(device) # (bt, L-1, 16) 
+        periods = (.1 + 50*c[:,3:-2,18:19]+100).to(torch.int32).to(device) # (bt, L-1, 16)
+        # print(periods.flatten())
+
+        # print(lpc.shape, periods.shape)
+        
+        # fake()
+        # === Train sample-wise predictive coding === 
+        
+        pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, T-160)
+        exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L-1) at i
         
         # x_i, exc_i, pred_i+1
         if inp_channels == 1:
-            # inp = utils.l2u(x)
             inp = x
         elif inp_channels == 3:
-            # inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
             inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
         
         optimizer.zero_grad()
-        exc_dist = model(inp, periods, feat) # (bt, 2, 2400) exc_hat_i+1
+        exc_dist = model_s(inp, periods, feat_out) # (bt, 2, 2400) exc_hat_i+1
         
-        loss1 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
-        # loss1 = gaussianloss(exc_dist[:,:,:-1], x[:,:,1:], size_average=True)
-        loss2 = 0
-#         if stft_loss:
-#             loss2 = mseloss(
-#                 utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
+        loss1 = mseloss(nm_feat_out, nm_feat[:,1:,:])
+        loss2 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
         
-        loss = loss1 + loss2
-
-        # loss = crossentropy(exc_dist[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))  # (input, target)
-        # sparse cross entropy
-    
+        loss = loss1 + 3 * loss2
         loss.backward()
         
-        nn.utils.clip_grad_norm_(model.parameters(), 10.)
+        # nn.utils.clip_grad_norm_(model.parameters(), 10.)
         
         optimizer.step()
+        
 
         epoch_loss += loss.item()
         display_loss += loss.item()
@@ -165,10 +181,23 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
             plt.savefig('samples/{}/exc_out_{}.jpg'.format(model_label, epoch))
             plt.clf()
             
-            plt.plot(exc[0,0,:].detach().cpu().numpy())
+
+            plt.plot(x[0,0,:].detach().cpu().numpy())
             plt.savefig('samples/{}/exc_{}.jpg'.format(model_label, epoch))
             plt.clf()
         
+        
+            plt.imshow(nm_feat_out[0,:-1,:].T.detach().cpu().numpy(), origin='lower', aspect='auto')
+            plt.colorbar()
+            plt.savefig('samples/{}/feat_out_{}.jpg'.format(model_label, epoch))
+            plt.clf()
+
+            plt.imshow(nm_feat[0,1:,:].T.detach().cpu().numpy(), origin='lower', aspect='auto')
+            plt.colorbar()
+            plt.savefig('samples/{}/feat_{}.jpg'.format(model_label, epoch))
+            plt.clf()
+            
+            
         if batch_idx % display_step == 0 and batch_idx != 0:
             display_end = time.time()
             duration = display_end - display_start
@@ -181,51 +210,53 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
 
     return epoch_loss / len(train_loader)
 
-def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_loss):
+def evaluate(model_f, model_s, test_loader, debugging, cin_channels, inp_channels, stft_loss):
 
-    model.eval()
+    model_f.eval()
+    model_s.eval()
     epoch_loss = 0.
     for batch_idx, (x, c, nm_c) in enumerate(test_loader):
         
-        x = x.to(torch.float).to(device)
-        
-        # Compute lpc from cepstrum coefficients
-        e, lpc_c, rc = ceps2lpc_v(c[:, 2:-2, :].reshape(-1, c.shape[-1]))
-        lpc = lpc_c.reshape(c.shape[0], c.shape[1]-4, 16)
-        lpc = torch.tensor(lpc).to(torch.float).to(device)
-    
+        # === Train frame-wise predictive coding ====
         if cin_channels == 20:
-            feat = torch.transpose(c[:, 2:-2, :-16], 1,2).to(torch.float).to(device) # (bt, 20, 15)
+            feat = c[:, 2:-2, :-16].to(torch.float).to(device) # (bt, 20, 15)
+            nm_feat = nm_c[:, 2:-2, :-16].to(torch.float).to(device) # (bt, 20, 15)
         else:
-            feat = torch.transpose(c[:, 2:-2, :], 1,2).to(torch.float).to(device) # (bt, 20, 15)
-        # lpc = c[:, 2:-2, -16:].to(torch.float).to(device) # (bt, 15, 16) 
+            feat = c[:, 2:-2, :].to(torch.float).to(device) # (bt, 20, 15)
+            nm_feat = nm_c[:, 2:-2, :].to(torch.float).to(device) # (bt, 20, 15)
+            
+        nm_feat_out = model_f(nm_feat)[:, :-1, :] # (B, L, C)
+        feat_out = MAXI * nm_feat_out # Scale back
         
-        periods = (.1 + 50*c[:,2:-2,18:19]+100).to(torch.int32).to(device)
+        #  --- Get LPC coefficients and periods values from the predicted feat_out --- 
+        e, lpc_c, rc = ceps2lpc_v(feat_out.reshape(-1, feat_out.shape[-1]).cpu())
+        lpc = lpc_c.reshape(feat_out.shape[0], feat_out.shape[1], 16).to(device)
         
-        pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
-        exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
+        # periods = (.1 + 50*feat_out[:,:,18:19]+100).to(torch.int32).to(device) # (bt, L-1, 16) 
+        feat_out = torch.transpose(feat_out, 1,2).to(device) # (bt, C, L-1)
         
+        # === Train sample-wise predictive coding === 
+        
+        x = x[:, :, 160:].to(torch.float).to(device) # (bt, 1, T-160)
+        # lpc = c[:, 3:-2, -16:].to(torch.float).to(device) # (bt, L-1, 16) 
+        periods = (.1 + 50*c[:,3:-2,18:19]+100).to(torch.int32).to(device) # (bt, L-1, 16) 
+
+        pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, T-160)
+        exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L-1) at i
+        
+        # x_i, exc_i, pred_i+1
         if inp_channels == 1:
-            # inp = utils.l2u(x)
             inp = x
         elif inp_channels == 3:
-            # inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
             inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
-            
-        exc_dist = model(inp, periods, feat) # (bt, 2, 2400)
         
-        # nn.utils.clip_grad_norm_(model.parameters(), 10.)
+        exc_dist = model_s(inp, periods, feat_out) # (bt, 2, 2400) exc_hat_i+1
 
-        loss1 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
-        loss2 = 0
-        # if stft_loss:
-        #     loss2 = mseloss(
-        #         utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
+        loss1 = mseloss(nm_feat_out, nm_feat[:,1:,:])
+        loss2 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
         
-        loss = loss1 + loss2
-        
-        # loss = crossentropy(exc_dist[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))
-        
+        loss = loss1 + 3 * loss2
+
         epoch_loss += loss
         
         del exc_dist
@@ -261,16 +292,21 @@ def run(cfg, model_label):
     train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=4, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=4, pin_memory=True)
     
-    model = build_model()
-    model.to(device)
+    model_f = Wavernn(in_features=20, out_features=cfg['out_features'], num_layers=2, fc_units=20).to(device)
+    model_s = build_model().to(device)
     
-    if cfg['transfer_model'] is not None:
+    if cfg['transfer_model_f'] is not None:
         
-        transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model']), str(cfg['transfer_model']), str(cfg['transfer_epoch']))
+        transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model_f']), str(cfg['transfer_model_f']), str(cfg['transfer_epoch_f']))
         print("Load checkpoint from: {}".format(transfer_model_path))
-        model.load_state_dict(torch.load(transfer_model_path))
+        model_f.load_state_dict(torch.load(transfer_model_path))
+    
+    if cfg['transfer_model_s'] is not None:
+        transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model_s']), str(cfg['transfer_model_s']), str(cfg['transfer_epoch_s']))
+        print("Load checkpoint from: {}".format(transfer_model_path))
+        model_s.load_state_dict(torch.load(transfer_model_path))
 
-    optimizer = optim.Adam(model.parameters(), lr=cfg['learning_rate'])
+    optimizer = optim.Adam(list(model_s.parameters()) + list(model_f.parameters()), lr=cfg['learning_rate'])
 
     global_step = 0
     
@@ -281,10 +317,10 @@ def run(cfg, model_label):
         
         start = time.time()
         
-        train_epoch_loss = train(model, optimizer, train_loader, epoch, model_label, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'], cfg['stft_loss'])
+        train_epoch_loss = train(model_f, model_s, optimizer, train_loader, epoch, model_label, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'], cfg['stft_loss'])
         
         with torch.no_grad():
-            test_epoch_loss = evaluate(model, test_loader, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'], cfg['stft_loss'])
+            test_epoch_loss = evaluate(model_f, model_s, test_loader, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'], cfg['stft_loss'])
             
         end = time.time()
         duration = end-start
@@ -295,7 +331,7 @@ def run(cfg, model_label):
                                     batch_id = None, 
                                     duration = duration, 
                                     model_label = model_label, 
-                                    state_dict = model.state_dict(), 
+                                    state_dict = (model_f.state_dict(), model_s.state_dict()), 
                                     train_loss = train_epoch_loss, 
                                     valid_loss = test_epoch_loss, 
                                     min_loss = min_loss)

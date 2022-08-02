@@ -17,16 +17,18 @@ class Libri_lpc_data_orig(Dataset):
         # training - 28539
         # testing - 2703
         # One "chunk" corresponds to 2400 samples, 15 frames
-        
-        if task == 'train':
+        self.task = task
+        if self.task == 'train':
             path = '/media/sdb1/Data/librispeech/train-clean-100/*/*/*.wav'
             self.feature_folder = '/media/sdb1/Data/libri_lpc_pt/train/'
-        elif task == 'val':
+        elif self.task == 'val':
             path = '/media/sdb1/Data/librispeech/dev-clean/*/*/*.wav'
             self.feature_folder = '/media/sdb1/Data/libri_lpc_pt/val/'
         
         self.files = glob.glob(path)
         self.chunks = chunks
+        
+        self.maxi = 24.1
         
         print('Using original data')
         
@@ -50,7 +52,7 @@ class Libri_lpc_data_orig(Dataset):
         
         features = torch.load(feature_path) # (19, 36)
         features = features[:nb_frames]
-        
+
         if self.chunks == 0: # pass all the data to dataloader
             self.chunks = nb_frames
             
@@ -62,7 +64,10 @@ class Libri_lpc_data_orig(Dataset):
         # print(in_data.shape)
         in_data = torch.tensor(np.reshape(in_data[:len(in_data) // 2400 * 2400], (-1, 2400)))
         
-        i = np.random.choice(nb_frames-self.chunks) if nb_frames > self.chunks else 0
+        if self.task == 'train':
+            i = np.random.choice(nb_frames-self.chunks) if nb_frames > self.chunks else 0
+        elif self.task == 'val':
+            i = nb_frames-self.chunks if nb_frames > self.chunks else 0
         
         while 1:
             x = torch.reshape(in_data[i:i+self.chunks], (self.chunks*2400,))
@@ -73,11 +78,13 @@ class Libri_lpc_data_orig(Dataset):
                 i = np.random.choice(nb_frames-self.chunks)
             else:
                 break
+                
+        nm_feat = feat / self.maxi
         
         x = x.unsqueeze(0) #(1, 2400)
         # feat - (N, 36)
         
-        return x, feat
+        return x, feat, nm_feat
         
         
         

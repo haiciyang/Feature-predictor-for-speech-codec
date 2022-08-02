@@ -114,21 +114,37 @@ def lpc_pred(cfg, x, lpc, N=None, n_repeat = None):
     return pred
 
 
+def cal_entropy(x):
+    
+    v_weights, v_values = np.histogram(x, bins=128, range=(0,1), density=True)
+    v_prob = v_weights/np.sum(v_weights)
+    out = - np.sum(v_prob * np.log(v_prob+1e-20))
+    
+    return round(out, 3)
+    
+
+
 def checkpoint(debugging, epoch, batch_id, duration, model_label, state_dict, train_loss, valid_loss, min_loss):
 
     result_path = 'results/'+ model_label +'.txt'
     if not os.path.exists('saved_models/'+model_label):
         os.mkdir('saved_models/'+model_label)
-        
-    model_path = 'saved_models/'+ model_label + '/' + model_label + '_' +str(epoch) +'.pth'
+    
+    
+    model_path = 'saved_models/'+ model_label + '/' + model_label + '_' +str(epoch) 
 
     if state_dict is not None: # when an epoch is finished
         # print(epoch, duration, train_loss, valid_loss)
         records = 'Epoch: {} | time: {:.2f} | train_loss: {:.4f} | valid_loss: {:.4f} \n'.format(epoch, duration, train_loss, valid_loss)
+        if valid_loss < min_loss:
+            min_loss = valid_loss
         if not debugging:
-            if valid_loss < min_loss:
-                min_loss = valid_loss
-            torch.save(state_dict, model_path)
+            if len(state_dict) == 2: # Save frame and sample predictive model respectively
+                torch.save(state_dict[0], model_path + '_f.pth')
+                torch.save(state_dict[1], model_path + '_s.pth')
+            else:
+                torch.save(state_dict, model_path + '.pth')
+        
     else:
         records = 'Epoch: {} | step: {} | time: {:.2f} | train_loss: {:.4f} \n'.format(epoch, batch_id, duration, train_loss)
     
@@ -161,3 +177,15 @@ def plot_training_output(y, y_hat, model_label, epoch):
     plt.imshow(Y, origin='lower', aspect='auto')
     plt.savefig('samples/{}/exc_{}.jpg'.format(model_label, epoch))
     plt.clf()
+
+
+def get_n_params(model):
+    
+    # count the number of parameters in a model
+    pp=0
+    for p in list(model.parameters()):
+        nn=1
+        for s in list(p.size()):
+            nn = nn*s
+        pp += nn
+    return pp

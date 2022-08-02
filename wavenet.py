@@ -90,17 +90,19 @@ class Wavenet(nn.Module):
 
     def upsample(self, c, periods):
         
-        emb_p = self.embedding(periods) # (bt, L, 1, 64)
-        emb_p = torch.transpose(emb_p[:,:,0,:], 1, 2) # (bt, 64, L) 
+        emb_p = self.embedding(periods) # (bt, 1, L, 64)
+
+        emb_p = torch.transpose(emb_p[:,:,0, :], 1, 2) # (bt, 64, L) 
         
         cfeat = torch.cat((c, emb_p), 1) # (bt, 64+C, L)
         
         # cfeat = c # not include periods
-        
+
         if self.fat_upsampler:
+            
             cfeat = torch.transpose(self.c_conv(cfeat), 1, 2) # (bt, L, C)
             cfeat = torch.transpose(self.c_fc(cfeat), 1, 2) # (br, C, L) 
-        
+
         if self.upsample_conv is not None:
             # B x 1 x C x T'
             cfeat = cfeat.unsqueeze(1)

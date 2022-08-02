@@ -15,20 +15,24 @@ def my_config():
             # Data  
             'frame_size': 160, 
             'lpcoeffs_N': 16,
-            'chunks': 7,
+            'chunks': 7, # One second - 6.666 chunks
             'sr': 16000,
             'n_sample_seg': 2400, 
             'n_seg': 15, 
             'orig': True,
+            'normalize': True, 
             
             # Training
             'epochs': 1000,
             'batch_size': 10,
             'learning_rate': 0.001,
             'ema_decay':0.9999, 
-            
+    
             'transfer_model': None,
-            'transfer_epoch': None,
+            'transfer_model_f': None,
+            'transfer_epoch_f': None,
+            'transfer_model_s': None,
+            'transfer_epoch_s': None,
 
             # Model
             'n_mels': None, 
@@ -45,7 +49,18 @@ def my_config():
             'num_workers': 2,
             'local': False,
             'fat_upsampler': True,
-            'stft_loss': True,
+            'stft_loss': False,
+            
+            # Model hyper-parameters of WaveRNN
+            'out_features': 20, 
+            'gru_units1': 384, 
+            'gru_units2': 16,
+            'rnn_layers':2,
+            'attn_units': 20,
+            'fc_units': 20, 
+            'packing': True,
+            'bidirectional': True,
+            
 
             'debugging': False,    
         
@@ -53,7 +68,10 @@ def my_config():
             'total_secs': 3, 
             'num_samples': 2,
             'model_label': None,
-            'epoch': None,
+            'model_label_s': None,
+            'model_label_f': None,
+            'epoch_s': None,
+            'epoch_f': None,
             'note': '',
             
     }
