@@ -81,13 +81,13 @@ def synthesis(cfg):
     
     # load test data
     if cfg['orig']:
-        test_dataset = Libri_lpc_data_orig('val', tot_chunks) 
+        test_dataset = Libri_lpc_data_orig('val', tot_chunks, qtz=cfg['qtz']) 
     else:
-        test_dataset = Libri_lpc_data('val', tot_chunks)
+        test_dataset = Libri_lpc_data('val', tot_chunks, qtz=cfg['qtz'])
         
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0, pin_memory=True)
     
-    for ns, (sample, c) in enumerate(test_loader):
+    for ns, (sample, c, _) in enumerate(test_loader):
         if ns < cfg['num_samples']:
             
             # ----- Load and prepare data ----
@@ -107,14 +107,9 @@ def synthesis(cfg):
            
             # pred2 = utils.lpc_pred(x=sample, lpc=lpc)
             
-            # saveaudio(wave=pred1, tp='lpc1', ns=ns)
-#             saveaudio(wave=pred2, tp='lpc2', ns=ns)
-            
-            
             # Save ground truth
             saveaudio(wave=sample, tp='truth', ns=ns)
-            # fake()
-            # continue
+
             
             torch.cuda.synchronize()
             
@@ -126,62 +121,64 @@ def synthesis(cfg):
             
             # ------ Initialize input array ------- 
             
-            rf_size = model.receptive_field_size()
-
-            x = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))
-            pred = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))
-            exc = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))   
-            x_out = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))   
+            x_out = model.generate_lpc(feat, periods, lpc_sample, tot_length)
             
-            if not cfg['local']:
-                c_upsampled = model.upsample(feat, periods)
-                # c_upsampled = model.upsample(feat)
-            else:
-                c_upsampled = torch.repeat_interleave(feat, 160, dim=-1)
+#             rf_size = model.receptive_field_size()
 
-            for i in tqdm(range(tot_length)):
+#             x = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))
+#             pred = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))
+#             exc = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))   
+#             x_out = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))   
+            
+#             if not cfg['local']:
+#                 c_upsampled = model.upsample(feat, periods)
+#                 # c_upsampled = model.upsample(feat)
+#             else:
+#                 c_upsampled = torch.repeat_interleave(feat, 160, dim=-1)
 
-                if i >= rf_size:
-                    start_idx = i - rf_size + 1
-                else:
-                    start_idx = 0
+#             for i in tqdm(range(tot_length)):
 
-                cond_c = c_upsampled[:, :, start_idx:i + 1]
+#                 if i >= rf_size:
+#                     start_idx = i - rf_size + 1
+#                 else:
+#                     start_idx = 0
 
-                i_rf = min(i+1, rf_size)            
-                x_in = x[:, :, -i_rf:]
+#                 cond_c = c_upsampled[:, :, start_idx:i + 1]
 
-#                 lpc_coef = lpc[:,i // 160,:].unsqueeze(1) #(bt, 1, 16)
-#                 pred_in = utils.lpc_pred(x=x_in, lpc=lpc_coef, N=i_rf, n_repeat=i_rf)
+#                 i_rf = min(i+1, rf_size)            
+#                 x_in = x[:, :, -i_rf:]
 
-                lpc_coef = lpc_sample[:, start_idx:i + 1, :]
-                pred_in = utils.lpc_pred(x=x_in, lpc=lpc_coef, n_repeat=1)
+# #                 lpc_coef = lpc[:,i // 160,:].unsqueeze(1) #(bt, 1, 16)
+# #                 pred_in = utils.lpc_pred(x=x_in, lpc=lpc_coef, N=i_rf, n_repeat=i_rf)
 
-                if cfg['inp_channels'] == 1:
-                    x_inp = x_in
-                elif cfg['inp_channels'] == 3:
-                    x_inp = torch.cat((x_in, exc[:, :, -i_rf:], pred_in.to('cuda')), 1)
+#                 lpc_coef = lpc_sample[:, start_idx:i + 1, :]
+#                 pred_in = utils.lpc_pred(x=x_in, lpc=lpc_coef, n_repeat=1)
 
-                with torch.no_grad():
-                    out = model.wavenet(x_inp, cond_c)
+#                 if cfg['inp_channels'] == 1:
+#                     x_inp = x_in
+#                 elif cfg['inp_channels'] == 3:
+#                     x_inp = torch.cat((x_in, exc[:, :, -i_rf:], pred_in.to('cuda')), 1)
 
-                exc_out = utils.sample_from_gaussian(out[:, :, -1:])
+#                 with torch.no_grad():
+#                     out = model.wavenet(x_inp, cond_c)
 
-                x = torch.roll(x, shifts=-1, dims=2)
-                x[:, :, -1] = exc_out + pred_in[:,:,-1]
-                # print(x[:, :, -1])
-                exc = torch.roll(exc, shifts=-1, dims=2)
-                exc[:, :, -1] = exc_out
-                pred[:, :, i+1] = pred_in[:,:,-1]
-                x_out[:, :, i+1] = 0.85 * x[:, :, -2] + x[:, :, -1]
-                # print(x[:, :, -1], exc_out, pred_in[:,:,-1])
+#                 exc_out = utils.sample_from_gaussian(out[:, :, -1:])
 
-                torch.cuda.synchronize()
+#                 x = torch.roll(x, shifts=-1, dims=2)
+#                 x[:, :, -1] = exc_out + pred_in[:,:,-1]
+#                 # print(x[:, :, -1])
+#                 exc = torch.roll(exc, shifts=-1, dims=2)
+#                 exc[:, :, -1] = exc_out
+#                 pred[:, :, i+1] = pred_in[:,:,-1]
+#                 x_out[:, :, i+1] = 0.85 * x[:, :, -2] + x[:, :, -1]
+#                 # print(x[:, :, -1], exc_out, pred_in[:,:,-1])
 
-            saveaudio(wave=x[:,:,1:], tp='xin', ns=ns)    
+#                 torch.cuda.synchronize()
+
+            # saveaudio(wave=x[:,:,1:], tp='xin', ns=ns)    
             saveaudio(wave=x_out[:,:,1:], tp='xout', ns=ns)    
-            saveaudio(wave=pred[:,:,1:], tp='pred', ns=ns)    
-            saveaudio(wave=exc[:,:,1:], tp='exc', ns=ns)    
+            # saveaudio(wave=pred[:,:,1:], tp='pred', ns=ns)    
+            # saveaudio(wave=exc[:,:,1:], tp='exc', ns=ns)    
             
 
 
