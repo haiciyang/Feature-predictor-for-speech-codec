@@ -47,7 +47,9 @@ class Libri_lpc_data(Dataset):
         in_data = in_data/(max_d+eps) * 0.999 # (2400, 1)
         # out_data = out_data/(max_d+eps) * 0.999 # (2400, 1)
            
-        nb_frames = len(in_data)
+        nb_frames = min(len(in_data), len(features))
+        
+        in_data = in_data[:nb_frames]
         
         if self.task == 'val':
             np.random.seed(0)

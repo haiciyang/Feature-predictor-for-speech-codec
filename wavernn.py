@@ -3,13 +3,18 @@ import torch
 import numpy as np
 from torch import nn
 from torch import Tensor
+from vq_func import quantize
 from typing import Optional, Tuple
 
 from torch.nn.utils.rnn import pad_packed_sequence
 
+from config import ex
+from sacred import Experiment
+
 import utils
 # from modules import Conv, ResBlock
 
+device = 'cuda'
 
 class Wavernn(nn.Module):
     
@@ -50,20 +55,20 @@ class Wavernn(nn.Module):
         # x = self.loop_attention(x)
         
         x, _ = self.rnn1(x) 
-#         if self.bidirectional == True:
-#             x = slef.take_mean(x)   # x - (bt, L, rnn_out)
-
+        # if self.bidirectional == True:
+        #     x = slef.take_mean(x)   # x - (bt, L, rnn_out)
+        # print(x.shape)
         x, _ = self.rnn2(x) 
-#         if self.bidirectional == True:
-#             x = slef.take_mean(x)   # x - (bt, L, rnn_out)
+        # if self.bidirectional == True:
+        #     x = slef.take_mean(x)   # x - (bt, L, rnn_out)
         
         # x, _ = self.rnn(x) # x - (bt, L, rnn_out)
         
         if self.packing:
             x, out_lens = pad_packed_sequence(x, batch_first=True)
         
-        if self.bidirectional == True:        
-            x = self.take_pred_mean(x)
+#         if self.bidirectional == True:        
+#             x = self.take_pred_mean(x)
         x = self.relu(x) 
         
         x = torch.cat((x.unsqueeze(1),x.unsqueeze(1)),1) # (bt, 2, L, C_in)
@@ -134,6 +139,56 @@ class Wavernn(nn.Module):
         y = (x_a[:,:-2,:] + x_b[:,2:,:])/2
         
         return y
+    
+    
+    @ex.capture
+    def encoder(self, cfg, feat, n_dim):
+
+        '''
+        Input: inp, model
+            - **inp** (Tuple(x, c, nm_c, (c_lens))): data sample from the dataloader
+            - **model** (WaveRNN()): pretrained frame-level prediction model
+        Output: c_in, r
+            - **c_in** (batch_size, seq_length, dim): prediced frames plus quantized residual
+            - **r** (batch_size, seq_length, dim): quantized residual
+        '''
+
+        c_in = torch.zeros(feat.shape).to(device) # (B, L, C)
+        c_in[:,:,-2:] = feat[:,:,-2:]
+        r = torch.zeros(feat.shape[0], feat.shape[1], 18).to(device)
+        r_qtz = torch.zeros(feat.shape[0], feat.shape[1], 18).to(device)
+        
+
+        for i in range(c_in.shape[1]-1):
+
+            f_out = self.forward(c_in[:, :i+1, :])[:,-1,:] # inputs previous frames; predicts i+1th frame
+            
+            r_s = feat[:,i+1,:-2] - f_out.clone()
+            r[:,i+1,:] = r_s
+            
+            r_s[:,-n_dim:] = torch.tensor(quantize((r_s[:,-n_dim:]).cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
+            # r_s = torch.tensor(quantize(r_s.cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
+            r_qtz[:,i+1,:] = r_s
+            
+            c_in[:,i+1,:-2] = f_out + r_s
+
+
+        return c_in, r, r_qtz
+    
+    @ex.capture
+    def decoder(self, cfg, r, feat):
+
+
+
+        c = torch.zeros(feat.shape).to(device) # (B, L, C)
+        c[:,:,-2:] = feat[:,:,-2:]
+
+        for i in range(c.shape[1]-1):
+
+            f_out = self.forward(c[:, :i+1, :])[:,-1,:] # inputs previous frames; predicts i+1th frame
+            c[:,i+1,:-2] = f_out + r[:,i+1, :]
+
+        return c
             
           
         

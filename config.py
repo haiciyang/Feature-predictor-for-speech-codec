@@ -21,14 +21,18 @@ def my_config():
             'n_seg': 15, 
             'orig': True,
             'normalize': True, 
+            'qtz': False,
+            'cb_path': 'codebook/ceps_vq_codebook_1_2048_large_17.npy',
+            'n_entries': [2048],
+            'code_dim': 17,
             
             # Training
             'epochs': 1000,
             'batch_size': 10,
             'learning_rate': 0.001,
             'ema_decay':0.9999, 
+            'upd_f_only': True,
     
-            'transfer_model': None,
             'transfer_model_f': None,
             'transfer_epoch_f': None,
             'transfer_model_s': None,
@@ -58,8 +62,8 @@ def my_config():
             'rnn_layers':2,
             'attn_units': 20,
             'fc_units': 20, 
-            'packing': True,
-            'bidirectional': True,
+            'packing': False,
+            'bidirectional': False,
             
 
             'debugging': False,    
@@ -67,7 +71,6 @@ def my_config():
             # Synthesis
             'total_secs': 3, 
             'num_samples': 2,
-            'model_label': None,
             'model_label_s': None,
             'model_label_f': None,
             'epoch_s': None,
@@ -78,56 +81,3 @@ def my_config():
     
     model_label = time.strftime("%m%d_%H%M%S")
 
-
-    
-@ex.named_config
-def iaf_config():
-    
-    cfg = {
-            # Data  
-            'frame_size': 160, 
-            'lpcoeffs_N': 16,
-            'chunks': 7,
-            'sr': 16000,
-            'n_sample_seg': 2400, 
-            'n_seg': 15, 
-            
-            # Training
-            'epochs': 1000,
-            'batch_size': 10,
-            'learning_rate': 0.001,
-            'ema_decay':0.9999, 
-            
-            'transfer_model': None,
-            'transfer_epoch': None,
-        
-            'wn_model': None,
-            'wn_epoch': None,
-
-            # Model
-            'n_mels': None, 
-            'num_blocks': 2,
-            'num_layers': 5,
-            'num_layers_iaf': 5, 
-            'inp_channels': 1,
-            'residual_channels': 128,
-            'gate_channels': 256,
-            'skip_channels': 128, 
-            'kernel_size': 2,
-            'cin_channels': 80,
-            'cout_channels': 128,
-            'num_workers': 2,
-            'local': False,
-
-            'debugging': False,    
-        
-            # Synthesis
-            'total_secs': 3, 
-            'num_samples': 2,
-            'model_label': None,
-            'epoch': None,
-            'note': '',
-            'orig': True,
-    }
-    
-    model_label = time.strftime("%m%d_%H%M%S")

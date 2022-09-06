@@ -58,13 +58,11 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
     
     exc_hat = None
     
-    for batch_idx, inp in enumerate(train_loader):
+    for batch_idx, (sample_name, x, c, nm_c) in enumerate(train_loader):
         
-        x, c, nm_c = inp[0], inp[1], inp[2]
-        
-        if padding:
-            c_lens = inp[3]
-        
+        print(sample_name)
+        fake()
+
         if normalize:
             feat = nm_c[:, 2:-2, :-16].to(torch.float).to(device) # (B, L, C)
         else:
@@ -91,8 +89,8 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
 
         # feat_out = nm_feat_out * MAXI
         
-        loss = mseloss(feat_out, feat[:,1:-1,:fc_units])
-        # loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units])
+        # loss = mseloss(feat_out, feat[:,1:-1,:fc_units])
+        loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units])
         # loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units]-feat[:, :-1,:fc_units])
         
         # loss = 1000 * (mseloss(nm_feat_out[:,:-1,:], nm_feat[:,1:,:]) + \
@@ -119,8 +117,8 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
             plt.savefig('samples/{}/feat_out_{}.jpg'.format(model_label, epoch))
             plt.clf()
             
-            plt.imshow((feat[0, 1:-1, :fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
-            # plt.imshow((feat[0, 1:, :fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
+            # plt.imshow((feat[0, 1:-1, :fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
+            plt.imshow((feat[0, 1:, :fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
             # plt.imshow((feat[0, 1:, :fc_units]-feat[0, :-1,:fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
             plt.colorbar()
             plt.savefig('samples/{}/feat_{}.jpg'.format(model_label, epoch))
@@ -137,12 +135,8 @@ def evaluate(model, test_loader, padding, packing, fc_units, normalize, debuggin
     model.eval()
     epoch_loss = 0.
     
-    for batch_idx, inp in enumerate(test_loader):
+    for batch_idx, (sample_name, x, c, nm_c)  in enumerate(test_loader):
         
-        x, c, nm_c = inp[0], inp[1], inp[2]
-        if padding:
-            c_lens = inp[3]
-            
         if normalize:
             feat = nm_c[:, 2:-2, :-16].to(torch.float).to(device) # (B, L, C)
         else:
@@ -152,31 +146,12 @@ def evaluate(model, test_loader, padding, packing, fc_units, normalize, debuggin
             inp = pack_padded_sequence(feat, c_lens, batch_first=True, enforce_sorted=False)
         else:
             inp = feat
-    
-#         nm_feat_out = model(inp)
-#         feat_out = nm_feat_out * MAXI
         
         feat_out = model(inp) # (B, L, C)
     
-        # feat_para = model(inp) # (B, L, C)
-        # feat_mu = feat_para[:,:,:fc_units//2]
-        # feat_logvar = feat_para[:,:,fc_units//2:]
-        
-        # loss = gaussian_loss(feat_mu[:,:-1,:], feat_logvar[:,:-1,:], nm_feat[:,1:,:18])
-        
-        
-        # loss = gaussian_loss(feat_mu[:,:-1,:], feat_logvar[:,:-1,:], feat[:,1:,:]-feat[:, :-1,:])
-        # loss = gaussian_loss(feat_mu[:,:-1,:], feat_logvar[:,:-1,:], feat[:,:-1,:18]-feat[:,1:,:18])
-#     
-        loss = mseloss(feat_out, feat[:,1:-1,:fc_units])
-        # loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units])
-        # loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units]-feat[:, :-1,:fc_units])
-        
-        # loss = 1000 * (mseloss(nm_feat_out[:,:-1,:], nm_feat[:,1:,:]) + \
-        # mseloss(torch.softmax(nm_feat_out[:,:-1,:], -1), torch.softmax(nm_feat[:,1:,:], -1)))
-        
-        # loss = 1000 * (mseloss(nm_feat_out[:,:-1,:], nm_feat[:,1:,:18]) - \
-        # mseloss(nm_feat_out, nm_feat))
+        # loss = mseloss(feat_out, feat[:,1:-1,:fc_units])
+        loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units])
+
         
         epoch_loss += loss.item()
         
@@ -219,12 +194,12 @@ if __name__ == '__main__':
         'packing': False,
         'normalize': True, 
         
-        'gru_units1': 384,
-        'gru_units2': 256,
+        'gru_units1': 128,
+        'gru_units2': 64,
         'fc_units': 18, 
         'attn_units': 20,
         'rnn_layers': 2, 
-        'bidirectional':True,
+        'bidirectional':False,
         
         
         'transfer_model': None,

@@ -95,7 +95,7 @@ class Wavenet(nn.Module):
         emb_p = self.embedding(periods) # (bt, 1, L, 64)
 
         emb_p = torch.transpose(emb_p[:,:,0, :], 1, 2) # (bt, 64, L) 
-        
+
         cfeat = torch.cat((c, emb_p), 1) # (bt, 64+C, L)
         
         # cfeat = c # not include periods
@@ -137,6 +137,8 @@ class Wavenet(nn.Module):
     def generate_lpc(self, feat, periods, lpc_sample,  tot_length):
         
         rf_size = self.receptive_field_size()
+        
+        tot_length = feat.shape[-1] * 160
 
         x = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))
         pred = torch.zeros(1, 1, tot_length + 1).to(torch.device('cuda'))

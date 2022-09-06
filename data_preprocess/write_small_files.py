@@ -4,13 +4,13 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
-task = 'train'
+task = 'val'
 print(task)
 
 if task == 'train':
-    path = '/media/sdb1/Data/libri_lpc/train/*.s16'
+    path = '/media/sdb1/Data/libri_lpc_qtz/train/*.f32'
 elif task == 'val':
-    path = '/media/sdb1/Data/libri_lpc/val/*.s16'
+    path = '/media/sdb1/Data/libri_lpc_qtz/val/*.f32'
     
 files = glob.glob(path)
 
@@ -23,48 +23,56 @@ pcm_chunk_size = frame_size*feature_chunk_size
 lookahead=2
 lpcoeffs_N = 16
 
-for data_f in tqdm(files):
+for features_f in tqdm(files):
     
 
-    feature_f = data_f[:-8] + 'features.f32'
-    name = data_f[:-8].split('/')[-1]
+    # feature_f = data_f[:-8] + 'features.f32'
     
-    if os.path.exists('/media/sdb1/Data/libri_lpc_pt/train/'+name+'_in_data.pt') and os.path.exists('/media/sdb1/Data/libri_lpc_pt/train/'+name+'_out_data.pt') and os.path.exists('/media/sdb1/Data/libri_lpc_pt/train/'+name+'_features.pt'):
+    name = features_f[:-12].split('/')[-1]
+
+    
+#     if os.path.exists('/media/sdb1/Data/libri_lpc_pt/train/'+name+'_in_data.pt') and os.path.exists('/media/sdb1/Data/libri_lpc_pt/train/'+name+'_out_data.pt') and os.path.exists('/media/sdb1/Data/libri_lpc_pt/train/'+name+'_features.pt'):
         
-        os.system('rm ' + data_f)
-        os.system('rm ' + feature_f)
-        continue
-    else:
-        data = np.memmap(data_f, dtype='int16', mode='r')
-        features = np.memmap(feature_f, dtype='float32', mode='r')
-        
-        os.system('rm ' + data_f)
-        os.system('rm ' + feature_f)
-
-        nb_frames = (len(data)//(2*pcm_chunk_size)-1)
-        data = data[(4-lookahead)*2*frame_size:]
-        data = data[:nb_frames*2*pcm_chunk_size]
-
-        data = np.reshape(data, (nb_frames, pcm_chunk_size, 2))
-
-        in_data = torch.tensor(data[:,:,:1])
-        out_data = torch.tensor(data[:,:,1:])
-
-        sizeof = features.strides[-1]
-        features = np.lib.stride_tricks.as_strided(
-            features, 
-            shape=(nb_frames, feature_chunk_size+4, nb_features),
-            strides=(feature_chunk_size*nb_features*sizeof, nb_features*sizeof, sizeof)
-        )
-
-        features = torch.tensor(features)
+#         os.system('rm ' + data_f)
+#         os.system('rm ' + feature_f)
+#         continue
+#     else:
+    
+    # data = np.memmap(data_f, dtype='int16', mode='r')
+    features = np.memmap(features_f, dtype='float32', mode='r')
 
 
-        torch.save(in_data, '/media/sdb1/Data/libri_lpc_pt/'+task+'/'+name+'_in_data.pt')
-        torch.save(out_data, '/media/sdb1/Data/libri_lpc_pt/'+task+'/'+name+'_out_data.pt')
-        torch.save(features, '/media/sdb1/Data/libri_lpc_pt/'+task+'/'+name+'_features.pt')
+    # os.system('rm ' + data_f)
+    # os.system('rm ' + feature_f)
 
-    del data, features
+    # nb_frames = (len(data)//(2*pcm_chunk_size)-1)
+
+#     data = data[(4-lookahead)*2*frame_size:]
+#     data = data[:nb_frames*2*pcm_chunk_size]
+
+#     data = np.reshape(data, (nb_frames, pcm_chunk_size, 2))
+
+#     in_data = torch.tensor(data[:,:,:1])
+#     out_data = torch.tensor(data[:,:,1:])
+
+    nb_frames = len(features)//(feature_chunk_size*nb_features)
+    
+    sizeof = features.strides[-1] #  the number of bytes needed to advance one value along each dimension.
+
+    features = np.lib.stride_tricks.as_strided(
+        features, 
+        shape=(nb_frames, feature_chunk_size+4, nb_features),
+        strides=(feature_chunk_size*nb_features*sizeof, nb_features*sizeof, sizeof)
+    )
+    
+
+    features = torch.tensor(features)
+
+#     torch.save(in_data, '/media/sdb1/Data/libri_lpc_pt/'+task+'/'+name+'_in_data.pt')
+#     torch.save(out_data, '/media/sdb1/Data/libri_lpc_pt/'+task+'/'+name+'_out_data.pt')
+    torch.save(features, '/media/sdb1/Data/libri_lpc_qtz_pt/'+task+'/'+name+'_features.pt')
+
+    # del data, features
     
 
 

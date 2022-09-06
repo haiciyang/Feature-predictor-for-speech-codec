@@ -54,6 +54,17 @@ def build_model(cfg):
                     fat_upsampler=cfg['fat_upsampler'])
     return model
 
+@ex.capture
+def build_rnn(cfg):
+    model = Wavernn(in_features = 20, 
+                    gru_units1 = cfg['gru_units1'],
+                    gru_units2 = cfg['gru_units2'],
+                    attn_units = cfg['attn_units'],
+                    bidirectional = cfg['bidirectional'],
+                    rnn_layers = cfg['rnn_layers'],
+                    fc_units = cfg['fc_units'],).to(device)
+    return model
+
 
 # def clone_as_averaged_model(model, ema):
 #     assert ema is not None
@@ -94,8 +105,8 @@ def sample_mu_prob(p, feat):
     return exc_out_u
 
 def train(model_f, model_s, optimizer, train_loader, epoch, model_label, debugging, cin_channels, inp_channels, stft_loss):
-    
-    model_f.train()
+
+    model_f.eval()
     model_s.train()
     
     epoch_loss = 0.
@@ -106,64 +117,47 @@ def train(model_f, model_s, optimizer, train_loader, epoch, model_label, debuggi
     
     exc_hat = None
     
-    for batch_idx, (x, c, nm_c) in enumerate(train_loader):
+    for batch_idx, ( _, x, c, nm_c) in enumerate(train_loader):
         
         # x - torch.Size([3, 1, 2400])
         # c - torch.Size([3, 19, 36])
         
         # === Train frame-wise predictive coding ====
+
         x = x[:, :, 160:].to(torch.float).to(device) # (bt, 1, T-160)
          
+        with torch.no_grad():
+            feat_in, r = model_f.encoder(feat=feat)
+            feat_out = model_f.decoder(r=r, feat=feat)
         
-        if cin_channels == 20:
-            feat = c[:, 2:-2, :-16].to(torch.float).to(device) # (bt, 20, 15)
-            nm_feat = nm_c[:, 2:-2, :-16].to(torch.float).to(device) # (bt, 20, 15)
-        else:
-            feat = c[:, 2:-2, :].to(torch.float).to(device) # (bt, 20, 15)
-            nm_feat = nm_c[:, 2:-2, :].to(torch.float).to(device) # (bt, 20, 15)
-            
-        nm_feat_out = model_f(nm_feat)[:, :-1, :]  # (B, L-1, C)
-        feat_out = MAXI * nm_feat_out # Scale back
-        
+        feat_out = feat_out[:, :-1, :]
+        feat_out = MAXI * feat_out # Scale back
+        lpc = c[:, 3:-2, -16:].to(torch.float).to(device) # (bt, L-1, 16) 
+        periods = (.1 + 50*feat_out[:,:,18:19]+100).to(torch.int32).to(device) # (bt, L-1, 16)
         
         #  --- Get LPC coefficients and periods values from the predicted feat_out --- 
-        e, lpc_c, rc = ceps2lpc_v(feat_out.reshape(-1, feat_out.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
-        lpc = lpc_c.reshape(feat_out.shape[0], feat_out.shape[1], 16).to(device) # (N, L-1, 16)
+        # e, lpc_c, rc = ceps2lpc_v(feat_out.reshape(-1, feat_out.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
+        # lpc = lpc_c.reshape(feat_out.shape[0], feat_out.shape[1], 16).to(device) # (N, L-1, 16)
         
-        # periods = (.1 + feat_out[:,:,18:19]+100).to(torch.int32).to(device) # (bt, L-1, 1) 
-        # print(periods.flatten())
-        # print(lpc.shape, periods.shape)
-#     
-        feat_out = torch.transpose(feat_out, 1,2).to(device) # (bt, C, L-1)
-        
-        # lpc = c[:, 3:-2, -16:].to(torch.float).to(device) # (bt, L-1, 16) 
-        periods = (.1 + 50*c[:,3:-2,18:19]+100).to(torch.int32).to(device) # (bt, L-1, 16)
-        # print(periods.flatten())
-
-        # print(lpc.shape, periods.shape)
-        
-        # fake()
         # === Train sample-wise predictive coding === 
         
         pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, T-160)
         exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L-1) at i
+        feat_out = torch.transpose(feat_out, 1,2).to(device) # (bt, C, L-1)
         
         # x_i, exc_i, pred_i+1
         if inp_channels == 1:
-            inp = x
+            inp_s = x
         elif inp_channels == 3:
-            inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
+            inp_s = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
         
         optimizer.zero_grad()
-        exc_dist = model_s(inp, periods, feat_out) # (bt, 2, 2400) exc_hat_i+1
+        exc_dist = model_s(inp_s, periods, feat_out) # (bt, 2, 2400) exc_hat_i+1
         
-        loss1 = mseloss(nm_feat_out, nm_feat[:,1:,:])
         loss2 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
         
-        loss = loss1 + 3 * loss2
+        loss = loss2
         loss.backward()
-        
-        # nn.utils.clip_grad_norm_(model.parameters(), 10.)
         
         optimizer.step()
         
@@ -181,23 +175,10 @@ def train(model_f, model_s, optimizer, train_loader, epoch, model_label, debuggi
             plt.savefig('samples/{}/exc_out_{}.jpg'.format(model_label, epoch))
             plt.clf()
             
-
-            plt.plot(x[0,0,:].detach().cpu().numpy())
+            plt.plot(exc[0,0,:].detach().cpu().numpy())
             plt.savefig('samples/{}/exc_{}.jpg'.format(model_label, epoch))
             plt.clf()
         
-        
-            plt.imshow(nm_feat_out[0,:-1,:].T.detach().cpu().numpy(), origin='lower', aspect='auto')
-            plt.colorbar()
-            plt.savefig('samples/{}/feat_out_{}.jpg'.format(model_label, epoch))
-            plt.clf()
-
-            plt.imshow(nm_feat[0,1:,:].T.detach().cpu().numpy(), origin='lower', aspect='auto')
-            plt.colorbar()
-            plt.savefig('samples/{}/feat_{}.jpg'.format(model_label, epoch))
-            plt.clf()
-            
-            
         if batch_idx % display_step == 0 and batch_idx != 0:
             display_end = time.time()
             duration = display_end - display_start
@@ -210,52 +191,54 @@ def train(model_f, model_s, optimizer, train_loader, epoch, model_label, debuggi
 
     return epoch_loss / len(train_loader)
 
+@torch.no_grad()
 def evaluate(model_f, model_s, test_loader, debugging, cin_channels, inp_channels, stft_loss):
 
     model_f.eval()
     model_s.eval()
     epoch_loss = 0.
-    for batch_idx, (x, c, nm_c) in enumerate(test_loader):
+    for batch_idx, ( _, x, c, nm_c) in enumerate(test_loader):
         
         # === Train frame-wise predictive coding ====
-        if cin_channels == 20:
-            feat = c[:, 2:-2, :-16].to(torch.float).to(device) # (bt, 20, 15)
-            nm_feat = nm_c[:, 2:-2, :-16].to(torch.float).to(device) # (bt, 20, 15)
+
+        if cfg['normalize']:
+            feat = nm_c[:, 2:-2, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
         else:
-            feat = c[:, 2:-2, :].to(torch.float).to(device) # (bt, 20, 15)
-            nm_feat = nm_c[:, 2:-2, :].to(torch.float).to(device) # (bt, 20, 15)
-            
-        nm_feat_out = model_f(nm_feat)[:, :-1, :] # (B, L, C)
-        feat_out = MAXI * nm_feat_out # Scale back
+            feat = c[:, 2:-2, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
+
+        x = x[:, :, 160:].to(torch.float).to(device) # (bt, 1, T-160)
+         
+        feat_in, r = model_f.encoder(feat=feat)
+        feat_out = model_f.decoder(r=r, feat=feat)
+        
+        feat_out = feat_out[:, :-1, :]
+        feat_out = MAXI * feat_out # Scale back
+        lpc = c[:, 3:-2, -16:].to(torch.float).to(device) # (bt, L-1, 16) 
+        periods = (.1 + 50*feat_out[:,:,18:19]+100).to(torch.int32).to(device) # (bt, L-1, 16)
         
         #  --- Get LPC coefficients and periods values from the predicted feat_out --- 
-        e, lpc_c, rc = ceps2lpc_v(feat_out.reshape(-1, feat_out.shape[-1]).cpu())
-        lpc = lpc_c.reshape(feat_out.shape[0], feat_out.shape[1], 16).to(device)
-        
-        # periods = (.1 + 50*feat_out[:,:,18:19]+100).to(torch.int32).to(device) # (bt, L-1, 16) 
-        feat_out = torch.transpose(feat_out, 1,2).to(device) # (bt, C, L-1)
-        
+        # e, lpc_c, rc = ceps2lpc_v(feat_out.reshape(-1, feat_out.shape[-1]).cpu())
+        # lpc = lpc_c.reshape(feat_out.shape[0], feat_out.shape[1], 16).to(device)
+
         # === Train sample-wise predictive coding === 
         
-        x = x[:, :, 160:].to(torch.float).to(device) # (bt, 1, T-160)
-        # lpc = c[:, 3:-2, -16:].to(torch.float).to(device) # (bt, L-1, 16) 
-        periods = (.1 + 50*c[:,3:-2,18:19]+100).to(torch.int32).to(device) # (bt, L-1, 16) 
-
         pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, T-160)
         exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L-1) at i
-        
+        feat_out = torch.transpose(feat_out, 1,2).to(device) # (bt, C, L-1)
+
         # x_i, exc_i, pred_i+1
         if inp_channels == 1:
-            inp = x
+            inp_s = x
         elif inp_channels == 3:
-            inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
+            inp_s = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
         
-        exc_dist = model_s(inp, periods, feat_out) # (bt, 2, 2400) exc_hat_i+1
+        exc_dist = model_s(inp_s, periods, feat_out) # (bt, 2, 2400) exc_hat_i+1
 
-        loss1 = mseloss(nm_feat_out, nm_feat[:,1:,:])
+        # loss1 = mseloss(nm_feat_out, nm_feat[:,1:,:])
         loss2 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
         
-        loss = loss1 + 3 * loss2
+        # loss = loss1 + 3 * loss2
+        loss = loss2
 
         epoch_loss += loss
         
@@ -284,29 +267,40 @@ def run(cfg, model_label):
         
     # ---- LOAD DATASETS -------
     if cfg['orig']:
-        train_dataset = Libri_lpc_data_orig('train', cfg['chunks'])
-        test_dataset = Libri_lpc_data_orig('val', cfg['chunks'])
+        train_dataset = Libri_lpc_data_orig('train', cfg['chunks'], qtz=['qtz'])
+        test_dataset = Libri_lpc_data_orig('val', cfg['chunks'], qtz=['qtz'])
     else:
-        train_dataset = Libri_lpc_data('train', cfg['chunks'])
-        test_dataset = Libri_lpc_data('val', cfg['chunks'])
+        train_dataset = Libri_lpc_data('train', cfg['chunks'], qtz=['qtz'])
+        test_dataset = Libri_lpc_data('val', cfg['chunks'], qtz=['qtz'])
     train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=4, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=4, pin_memory=True)
     
-    model_f = Wavernn(in_features=20, out_features=cfg['out_features'], num_layers=2, fc_units=20).to(device)
+    model_f = build_rnn().to(device)
     model_s = build_model().to(device)
     
-    if cfg['transfer_model_f'] is not None:
-        
-        transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model_f']), str(cfg['transfer_model_f']), str(cfg['transfer_epoch_f']))
-        print("Load checkpoint from: {}".format(transfer_model_path))
-        model_f.load_state_dict(torch.load(transfer_model_path))
+    model_f.eval()
     
+    # if cfg['transfer_model_f'] is not None:
+        
+    transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model_f']), str(cfg['transfer_model_f']), str(cfg['transfer_epoch_f']))
+    print("Load checkpoint from: {}".format(transfer_model_path))
+    model_f.load_state_dict(torch.load(transfer_model_path))
+
     if cfg['transfer_model_s'] is not None:
         transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model_s']), str(cfg['transfer_model_s']), str(cfg['transfer_epoch_s']))
         print("Load checkpoint from: {}".format(transfer_model_path))
         model_s.load_state_dict(torch.load(transfer_model_path))
+        
+        
+        if cfg['upd_f_only']: # Do not update sample-level network
+            for p in model_s.front_conv.parameters():
+                p.requires_grad=False
+            for p in model_s.res_blocks.parameters():
+                p.requires_grad=False
+            for p in model_s.final_conv.parameters():
+                p.requires_grad=False
 
-    optimizer = optim.Adam(list(model_s.parameters()) + list(model_f.parameters()), lr=cfg['learning_rate'])
+    optimizer = optim.Adam(model_s.parameters(), lr=cfg['learning_rate'])
 
     global_step = 0
     

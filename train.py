@@ -19,6 +19,7 @@ from wavenet import Wavenet
 from dataset import Libri_lpc_data
 from ceps2lpc_vct import ceps2lpc_v
 from dataset_orig import Libri_lpc_data_orig
+from dataset_retrain import Libri_lpc_data_retrain
 from modules import ExponentialMovingAverage, GaussianLoss
 
 from config import ex
@@ -94,31 +95,33 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
 
     epoch_loss = 0.
     start_time = time.time()
-    display_step = 500
+    display_step = 100
     display_loss = 0.
     display_start = time.time()
     
     exc_hat = None
     
-    for batch_idx, (x, c, nm_c) in enumerate(train_loader):
+    for batch_idx, (_, x, c) in enumerate(train_loader):
         
         # x - torch.Size([3, 1, 2400])
         # y - torch.Size([3, 1, 2400])
         # c - torch.Size([3, 19, 36])
         
         x = x.to(torch.float).to(device)
+
         # y = y.to(torch.float).to(device)
-        e, lpc_c, rc = ceps2lpc_v(c[:, 2:-2, :].reshape(-1, c.shape[-1]))
-        lpc = lpc_c.reshape(c.shape[0], c.shape[1]-4, 16)
-        lpc = torch.tensor(lpc).to(torch.float).to(device)
+        # e, lpc_c, rc = ceps2lpc_v(c[:, 2:-2, :].reshape(-1, c.shape[-1]))
+        # lpc = lpc_c.reshape(c.shape[0], c.shape[1]-4, 16)
+        # lpc = torch.tensor(lpc).to(torch.float).to(device)
+
 
         if cin_channels == 20:
-            feat = torch.transpose(c[:, 2:-2, :-16], 1,2).to(torch.float).to(device) # (bt, 20, 15)
+            feat = torch.transpose(c[:, :, :-16], 1,2).to(torch.float).to(device) # (bt, 20, 15)
         else:
-            feat = torch.transpose(c[:, 2:-2, :], 1,2).to(torch.float).to(device) # (bt, 20, 15)
+            feat = torch.transpose(c, 1,2).to(torch.float).to(device) # (bt, 20, 15)
         
-        # lpc = c[:, 2:-2, -16:].to(torch.float).to(device) # (bt, 15, 16) 
-        periods = (.1 + 50*c[:,2:-2,18:19]+100).to(torch.int32).to(device)
+        lpc = c[:, :, -16:].to(torch.float).to(device) # (bt, 15, 16) 
+        periods = (.1 + 50*c[:,:,18:19]+100).to(torch.int32).to(device)
         
         pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
         exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
@@ -185,22 +188,22 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
 
     model.eval()
     epoch_loss = 0.
-    for batch_idx, (x, c, nm_c) in enumerate(test_loader):
+    for batch_idx, (_, x, c) in enumerate(test_loader):
         
         x = x.to(torch.float).to(device)
         
         # Compute lpc from cepstrum coefficients
-        e, lpc_c, rc = ceps2lpc_v(c[:, 2:-2, :].reshape(-1, c.shape[-1]))
-        lpc = lpc_c.reshape(c.shape[0], c.shape[1]-4, 16)
-        lpc = torch.tensor(lpc).to(torch.float).to(device)
+        # e, lpc_c, rc = ceps2lpc_v(c[:, 2:-2, :].reshape(-1, c.shape[-1]))
+        # lpc = lpc_c.reshape(c.shape[0], c.shape[1]-4, 16)
+        # lpc = torch.tensor(lpc).to(torch.float).to(device)
     
         if cin_channels == 20:
-            feat = torch.transpose(c[:, 2:-2, :-16], 1,2).to(torch.float).to(device) # (bt, 20, 15)
+            feat = torch.transpose(c[:, :, :-16], 1,2).to(torch.float).to(device) # (bt, 20, 15)
         else:
-            feat = torch.transpose(c[:, 2:-2, :], 1,2).to(torch.float).to(device) # (bt, 20, 15)
-        # lpc = c[:, 2:-2, -16:].to(torch.float).to(device) # (bt, 15, 16) 
+            feat = torch.transpose(c[:, :, :], 1,2).to(torch.float).to(device) # (bt, 20, 15)
+        lpc = c[:, :, -16:].to(torch.float).to(device) # (bt, 15, 16) 
         
-        periods = (.1 + 50*c[:,2:-2,18:19]+100).to(torch.int32).to(device)
+        periods = (.1 + 50*c[:, :,18:19]+100).to(torch.int32).to(device)
         
         pred = utils.lpc_pred(x=x, lpc=lpc) # (bt, 1, 2400)
         exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
@@ -253,22 +256,34 @@ def run(cfg, model_label):
         
     # ---- LOAD DATASETS -------
     if cfg['orig']:
-        train_dataset = Libri_lpc_data_orig('train', cfg['chunks'])
-        test_dataset = Libri_lpc_data_orig('val', cfg['chunks'])
+        # train_dataset = Libri_lpc_data_orig('train', cfg['chunks'], cfg['qtz'])
+        train_dataset = Libri_lpc_data_retrain()
+        # test_dataset = Libri_lpc_data_orig('val', cfg['chunks'], cfg['qtz'])
     else:
         train_dataset = Libri_lpc_data('train', cfg['chunks'])
         test_dataset = Libri_lpc_data('val', cfg['chunks'])
+
     train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=4, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=4, pin_memory=True)
+#     test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=4, pin_memory=True)
     
     model = build_model()
     model.to(device)
     
-    if cfg['transfer_model'] is not None:
+    if cfg['transfer_model_s'] is not None:
         
-        transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model']), str(cfg['transfer_model']), str(cfg['transfer_epoch']))
+        transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model_s']), str(cfg['transfer_model_s']), str(cfg['transfer_epoch_s']))
         print("Load checkpoint from: {}".format(transfer_model_path))
+        
+        
         model.load_state_dict(torch.load(transfer_model_path))
+        
+        if cfg['upd_f_only']: # Do not update sample-level network
+            for p in model.front_conv.parameters():
+                p.requires_grad=False
+            for p in model.res_blocks.parameters():
+                p.requires_grad=False
+            for p in model.final_conv.parameters():
+                p.requires_grad=False
 
     optimizer = optim.Adam(model.parameters(), lr=cfg['learning_rate'])
 
@@ -283,8 +298,9 @@ def run(cfg, model_label):
         
         train_epoch_loss = train(model, optimizer, train_loader, epoch, model_label, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'], cfg['stft_loss'])
         
-        with torch.no_grad():
-            test_epoch_loss = evaluate(model, test_loader, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'], cfg['stft_loss'])
+        test_epoch_loss = 0
+#         with torch.no_grad():
+#             test_epoch_loss = evaluate(model, test_loader, cfg['debugging'], cfg['cin_channels'], cfg['inp_channels'], cfg['stft_loss'])
             
         end = time.time()
         duration = end-start
