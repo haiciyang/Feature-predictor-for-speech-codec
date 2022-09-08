@@ -1,6 +1,8 @@
 import time
 import torch
 import numpy as np
+from tqdm import tqdm
+
 from torch import nn
 from torch import Tensor
 from vq_func import quantize
@@ -142,38 +144,42 @@ class Wavernn(nn.Module):
     
     
     @ex.capture
-    def encoder(self, cfg, feat, n_dim):
+    def encoder(self, cfg, feat, n_dim, mask):
 
         '''
-        Input: inp, model
-            - **inp** (Tuple(x, c, nm_c, (c_lens))): data sample from the dataloader
-            - **model** (WaveRNN()): pretrained frame-level prediction model
+        Input: feat, n_dim, mask
+            - **feat**:
+            - **n_dim**:
+            - **mask**: (seq_length)
         Output: c_in, r
             - **c_in** (batch_size, seq_length, dim): prediced frames plus quantized residual
             - **r** (batch_size, seq_length, dim): quantized residual
         '''
-
-        c_in = torch.zeros(feat.shape).to(device) # (B, L, C)
-        c_in[:,:,-2:] = feat[:,:,-2:]
-        r = torch.zeros(feat.shape[0], feat.shape[1], 18).to(device)
-        r_qtz = torch.zeros(feat.shape[0], feat.shape[1], 18).to(device)
+        B, L, C = feat.shape
+        c_in = torch.zeros(B, L+1, C).to(device) # (B, L, C)
+        c_in[:,1:,-2:] = feat[:,:,-2:]
+        r = torch.zeros(B, L, 18).to(device)
+        r_qtz = torch.zeros(B, L, 18).to(device)
         
 
-        for i in range(c_in.shape[1]-1):
+        for i in tqdm(range(c_in.shape[1]-1)):
 
             f_out = self.forward(c_in[:, :i+1, :])[:,-1,:] # inputs previous frames; predicts i+1th frame
+
+            if mask[i] == 1:
+                r_s = feat[:,i,:-2] - f_out.clone()
+                r[:,i,:] = r_s
+                r_s[:,-n_dim:] = torch.tensor(quantize((r_s[:,-n_dim:]).cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
+                # r_s = torch.tensor(quantize(r_s.cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
+                r_qtz[:,i,:] = r_s
             
-            r_s = feat[:,i+1,:-2] - f_out.clone()
-            r[:,i+1,:] = r_s
-            
-            r_s[:,-n_dim:] = torch.tensor(quantize((r_s[:,-n_dim:]).cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
-            # r_s = torch.tensor(quantize(r_s.cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
-            r_qtz[:,i+1,:] = r_s
-            
-            c_in[:,i+1,:-2] = f_out + r_s
+                c_in[:,i+1,:-2] = f_out + r_s
+                
+            else:
+                c_in[:,i+1,:-2] = f_out
 
 
-        return c_in, r, r_qtz
+        return c_in[:,1:,:], r, r_qtz
     
     @ex.capture
     def decoder(self, cfg, r, feat):

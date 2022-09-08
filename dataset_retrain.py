@@ -68,7 +68,7 @@ class Libri_lpc_data_retrain(Dataset):
 #         orig_feat = orig_feat[:nb_frames]
         
         features = torch.tensor(np.load(feat_path)) # (1, 150, 36)
-        features = features[:,:,:-16] * self.maxi
+        features = features[:,:,:-16] *self.maxi
         e, lpc_c, rc = ceps2lpc_v((features).reshape(-1, features.shape[-1]).cpu())
         features = torch.cat((features.cpu(), lpc_c.unsqueeze(0)), -1)
         
