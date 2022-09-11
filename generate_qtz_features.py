@@ -20,7 +20,7 @@ from wavenet import Wavenet
 from wavernn import Wavernn
 from dataset import Libri_lpc_data
 from ceps2lpc_vct import ceps2lpc_v
-from dataset_orig import Libri_lpc_data_orig
+from dataset import Libri_lpc_data
 from modules import ExponentialMovingAverage, GaussianLoss
 
 from config import ex
@@ -31,6 +31,8 @@ np.set_printoptions(precision=4)
 
 use_cuda = torch.cuda.is_available()
 device = torch.device("cuda" if use_cuda else "cpu")
+
+MAXI = 24.1
 
 @ex.capture
 def build_rnn(cfg):
@@ -51,7 +53,7 @@ def run(cfg, model_label):
     # ---- LOAD DATASETS -------
     
     task = 'train' 
-    qtz_dataset = Libri_lpc_data_orig(task, chunks=10, qtz=0) # return unquantized ceps and qunatized pitch
+    qtz_dataset = Libri_lpc_data(task, chunks=10, qtz=0) # return unquantized ceps and qunatized pitch
     # dataset = Libri_lpc_data_orig(task, chunks=10, qtz=-1) # return unquantized features
     # all_dataset = Libri_lpc_data_orig(task, chunks=10, qtz=1) # return quantized features
     data_loader = DataLoader(qtz_dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
@@ -75,6 +77,7 @@ def run(cfg, model_label):
     if not os.path.exists(path):
         os.mkdir(path)
     
+    k = 0
     # for (qtz_inp, inp, all_inp) in tqdm(zip(qtz_dataset, dataset, all_dataset)):
     for sample_name, x, c, nm_c in tqdm(data_loader):
         
@@ -90,23 +93,35 @@ def run(cfg, model_label):
 #         c = torch.unsqueeze(qtz_inp[-2], 0)
 #         nm_c = torch.unsqueeze(qtz_inp[-1], 0)
         
+        # nm_c - (10, 19, 36)
         
         if cfg['normalize']:
-            feat = nm_c[:, 2:-2, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
+            feat = nm_c[:, :, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
         else:
-            feat = c[:, 2:-2, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
-        feat_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim']) # (bt, seq_length, n_dim)
-        # mask = torch.repeat(torch.tensor(0,1), len(r)
-        # r_qtz = 
-        # feat_out = model_f.decoder(r=r_qtz, feat=feat)
-                            
+            feat = c[:, :, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
+        
+        mask = torch.ones(nm_c.shape[1])
+        feat_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim'], mask = mask) # (bt, seq_length, n_dim)
+        feat_in *= MAXI
         
         e, lpc_c, rc = ceps2lpc_v(feat_in.reshape(-1, feat_in.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
         
-        all_features = torch.cat((feat_in.cpu(), lpc_c.unsqueeze(0)), -1)
-
+        all_features = torch.cat((feat_in.cpu(), lpc_c.unsqueeze(0)), -1).data.numpy()
         
-        torch.save(all_features, '{}/{}.pt'.format(path, sample_name[0]))
+        sizeof = all_features.strides[-1]
+        all_features = np.lib.stride_tricks.as_strided(
+                    all_features.flatten(), 
+                    shape=(10, 19, 36),
+                    strides=(15*36*sizeof, 36*sizeof, sizeof)) #(10, 19, 36)
+        
+        np.save('{}/{}.npy'.format(path, sample_name[0]), all_features)
+        # fake()
+        
+        k += 1
+        if k == 5000:
+            break
+        
+        # torch.save(all_features, '{}/{}.pt'.format(path, sample_name[0]))
         
         
 #         torch.save(nm_c[:,2:-2, :18], 'samples/nm_feat.pt')

@@ -103,9 +103,8 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
     
     for batch_idx, (_, x, c) in enumerate(train_loader):
         
-        # x - torch.Size([3, 1, 2400])
-        # y - torch.Size([3, 1, 2400])
-        # c - torch.Size([3, 19, 36])
+        # x - torch.Size([3, 1, 2400*n])
+        # c - torch.Size([3, 15*n, 36])
         
         x = x.to(torch.float).to(device)
 
@@ -138,17 +137,10 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         exc_dist = model(inp, periods, feat) # (bt, 2, 2400) exc_hat_i+1
         
         loss1 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
-        # loss1 = gaussianloss(exc_dist[:,:,:-1], x[:,:,1:], size_average=True)
         loss2 = 0
-#         if stft_loss:
-#             loss2 = mseloss(
-#                 utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
         
         loss = loss1 + loss2
 
-        # loss = crossentropy(exc_dist[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))  # (input, target)
-        # sparse cross entropy
-    
         loss.backward()
         
         nn.utils.clip_grad_norm_(model.parameters(), 10.)
@@ -192,11 +184,6 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
         
         x = x.to(torch.float).to(device)
         
-        # Compute lpc from cepstrum coefficients
-        # e, lpc_c, rc = ceps2lpc_v(c[:, 2:-2, :].reshape(-1, c.shape[-1]))
-        # lpc = lpc_c.reshape(c.shape[0], c.shape[1]-4, 16)
-        # lpc = torch.tensor(lpc).to(torch.float).to(device)
-    
         if cin_channels == 20:
             feat = torch.transpose(c[:, :, :-16], 1,2).to(torch.float).to(device) # (bt, 20, 15)
         else:
@@ -209,10 +196,8 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
         exc = x - torch.roll(pred,shifts=1,dims=2) #(bt, 1, L) at i
         
         if inp_channels == 1:
-            # inp = utils.l2u(x)
             inp = x
         elif inp_channels == 3:
-            # inp = torch.cat((utils.l2u(x), utils.l2u(exc), utils.l2u(pred).to(device)), 1) # (bt, 3, n*2400)
             inp = torch.cat((x, exc, pred.to(device)), 1) # (bt, 3, n*2400)
             
         exc_dist = model(inp, periods, feat) # (bt, 2, 2400)
@@ -221,18 +206,12 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
 
         loss1 = gaussianloss(exc_dist[:,:,:-1], exc[:,:,1:], size_average=True)
         loss2 = 0
-        # if stft_loss:
-        #     loss2 = mseloss(
-        #         utils.stft(x[:,0,1:]), utils.stft(x_hat[:,0,:-1]))
-        
+
         loss = loss1 + loss2
-        
-        # loss = crossentropy(exc_dist[:,:,:-1], utils.l2u(exc)[:,0,1:].to(torch.long))
-        
+
         epoch_loss += loss
         
         del exc_dist
-        # del exc
         
         if debugging:
             break

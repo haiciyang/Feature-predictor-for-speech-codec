@@ -60,9 +60,6 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
     
     for batch_idx, (sample_name, x, c, nm_c) in enumerate(train_loader):
         
-        print(sample_name)
-        fake()
-
         if normalize:
             feat = nm_c[:, 2:-2, :-16].to(torch.float).to(device) # (B, L, C)
         else:
@@ -192,9 +189,9 @@ if __name__ == '__main__':
         'epochs': 5000,
         'padding': False,
         'packing': False,
-        'normalize': True, 
+        'normalize': False, 
         
-        'gru_units1': 128,
+        'gru_units1': 64,
         'gru_units2': 64,
         'fc_units': 18, 
         'attn_units': 20,

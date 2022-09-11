@@ -121,14 +121,21 @@ def synthesis(cfg):
         if ns >= cfg['num_samples']:
             break
         
-        np.save('samples/{}/{}_nmc.npy'.format(model_label_f, sample_name[0]), \
-                nm_c.cpu().data.numpy())
-        
-        np.save('samples/{}/{}_qtz.npy'.format(model_label_f, sample_name[0]), \
-                qtz_c.cpu().data.numpy())
-
-        fake()
+        # Non-mask
         mask = torch.ones(nm_c.shape[1])
+        
+        feat = nm_c[:,:,:-16].to('cuda')
+        c_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim'], mask = mask)     
+        
+        c_in *= MAXI
+        
+        e, lpc_c, rc = ceps2lpc_v(c_in.reshape(-1, c_in.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
+        all_features = torch.cat((c_in.cpu(), lpc_c.unsqueeze(0)), -1)
+        
+        np.save('samples/{}/{}_cin.npy'.format(model_label_f, sample_name[0]), \
+                all_features.cpu().data.numpy())
+        
+        # 1-0 mask
         mask[:nm_c.shape[1]//2*2] = torch.tensor((1,0)).repeat(nm_c.shape[1]//2)
         
         feat = nm_c[:,:,:-16].to('cuda')
@@ -140,7 +147,7 @@ def synthesis(cfg):
         all_features = torch.cat((c_in.cpu(), lpc_c.unsqueeze(0)), -1)
         
 
-        np.save('samples/{}/{}_cin.npy'.format(model_label_f, sample_name[0]), \
+        np.save('samples/{}/{}_cin_mask.npy'.format(model_label_f, sample_name[0]), \
                 all_features.cpu().data.numpy())
         
         np.save('samples/{}/{}_qtz.npy'.format(model_label_f, sample_name[0]), \

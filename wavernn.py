@@ -162,7 +162,7 @@ class Wavernn(nn.Module):
         r_qtz = torch.zeros(B, L, 18).to(device)
         
 
-        for i in tqdm(range(c_in.shape[1]-1)):
+        for i in range(c_in.shape[1]-1):
 
             f_out = self.forward(c_in[:, :i+1, :])[:,-1,:] # inputs previous frames; predicts i+1th frame
 
