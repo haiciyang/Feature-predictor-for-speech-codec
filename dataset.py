@@ -22,12 +22,17 @@ class Libri_lpc_data(Dataset):
         self.qtz = qtz
         
         if task == 'train':
-            path = '/media/sdb1/Data/libri_lpc_pt/train/*_in_data.pt'
+            # path = '/media/sdb1/Data/libri_lpc_pt/train/*_in_data.pt'
+            path = '/data/hy17/librispeech/libri_lpc_pt/train/*_in_data.pt'
         elif task == 'val':
-            path = '/media/sdb1/Data/libri_lpc_pt/val/*_in_data.pt'
+            # path = '/media/sdb1/Data/libri_lpc_pt/val/*_in_data.pt'
+            path = '/data/hy17/librispeech/libri_lpc_pt/val/*_in_data.pt'
         
-        self.feature_qtz_folder = '/media/sdb1/Data/libri_lpc_qtz_pt/{}/'.format(task)
-        self.feature_folder = '/media/sdb1/Data/libri_lpc_pt/{}/'.format(task)
+        # self.feature_qtz_folder = '/media/sdb1/Data/libri_lpc_qtz_pt/{}/'.format(task)
+        # self.feature_folder = '/media/sdb1/Data/libri_lpc_pt/{}/'.format(task)
+        
+        self.feature_qtz_folder = '/data/hy17/librispeech/libri_lpc_qtz_pt/{}/'.format(task)
+        self.feature_folder = '/data/hy17/librispeech/libri_lpc_pt/{}/'.format(task)
         
         self.files = glob.glob(path)
 

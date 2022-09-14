@@ -70,7 +70,8 @@ def run(cfg, model_label):
     original = []
     pred = []
 
-    path = '/media/sdb1/haici/libri_qtz_ft/{}'.format(cfg['cb_path'].split('/')[-1][17:-4])
+    # path = '/data/hy17/haici/libri_qtz_ft/{}'.format(cfg['cb_path'].split('/')[-1][17:-4])
+    path = '/data/hy17/librispeech/libri_qtz_ft/{}'.format(cfg['cb_path'].split('/')[-1][17:-4])
 
     print('Saving quantized features at:', path)
     
@@ -80,6 +81,11 @@ def run(cfg, model_label):
     k = 0
     # for (qtz_inp, inp, all_inp) in tqdm(zip(qtz_dataset, dataset, all_dataset)):
     for sample_name, x, c, nm_c in tqdm(data_loader):
+        
+        if k < 5000:
+            k += 1
+            continue
+            
         
 #         # Calculate the average error between features and LPCNet original quantized features
 #         orig_nm_c = torch.unsqueeze(inp[-1], 0)[:, 2:-2, :-16].to(torch.float).to(device)
@@ -101,7 +107,11 @@ def run(cfg, model_label):
             feat = c[:, :, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
         
         mask = torch.ones(nm_c.shape[1])
-        feat_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim'], mask = mask) # (bt, seq_length, n_dim)
+        # mask[:nm_c.shape[1]//2*2] = torch.tensor((1,0)).repeat(nm_c.shape[1]//2)
+
+        feat_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim'], mask = mask)     
+        
+        # feat_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim'], mask = mask) # (bt, seq_length, n_dim)
         feat_in *= MAXI
         
         e, lpc_c, rc = ceps2lpc_v(feat_in.reshape(-1, feat_in.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
@@ -118,8 +128,7 @@ def run(cfg, model_label):
         # fake()
         
         k += 1
-        if k == 5000:
-            break
+        
         
         # torch.save(all_features, '{}/{}.pt'.format(path, sample_name[0]))
         

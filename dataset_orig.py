@@ -30,13 +30,13 @@ class Libri_lpc_data_orig(Dataset):
         self.qtz = qtz
         
         if self.task == 'train':
-            path = '/media/sdb1/Data/librispeech/train-clean-100/*/*/*.wav'
+            path = '/data/hy17/librispeech/librispeech/train-clean-100/*/*/*.wav'
         elif self.task == 'val':
-            path = '/media/sdb1/Data/librispeech/dev-clean/*/*/*.wav'
+            path = '/data/hy17/librispeech/librispeech/dev-clean/*/*/*.wav'
         self.files = glob.glob(path)
         
-        self.feature_qtz_folder = '/media/sdb1/Data/libri_lpc_qtz_pt/{}/'.format(task)
-        self.feature_folder = '/media/sdb1/Data/libri_lpc_pt/{}/'.format(task)
+        self.feature_qtz_folder = '/data/hy17/librispeech/libri_lpc_qtz_pt/{}/'.format(task)
+        self.feature_folder = '/data/hy17/librispeech/libri_lpc_pt/{}/'.format(task)
 
         print('Using original data')
         

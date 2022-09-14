@@ -70,6 +70,7 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
         else:
             inp = feat
  
+        if 
         feat_out = model(inp) # (B, L, C)
         
 #         print(feat_out.shape)
