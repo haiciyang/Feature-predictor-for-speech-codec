@@ -82,11 +82,11 @@ class Libri_lpc_data_orig(Dataset):
         # print(in_data.shape)
         in_data = torch.tensor(np.reshape(in_data[:len(in_data) // 2400 * 2400], (-1, 2400)))
         
-        # if self.task == 'train':
-        #     i = np.random.choice(nb_frames-self.chunks) if nb_frames > self.chunks else 0
-        # elif self.task == 'val':
-            # i = nb_frames-self.chunks if nb_frames > self.chunks else 0
-        i = 0
+        if self.task == 'train':
+            i = np.random.choice(nb_frames-self.chunks) if nb_frames > self.chunks else 0
+        elif self.task == 'val':
+            i = nb_frames-self.chunks if nb_frames > self.chunks else 0
+        # i = 0
         
         while 1:
             x = torch.reshape(in_data[i:i+self.chunks], (self.chunks*2400,))

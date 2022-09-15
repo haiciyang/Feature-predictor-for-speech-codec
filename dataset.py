@@ -36,7 +36,6 @@ class Libri_lpc_data(Dataset):
         
         self.files = glob.glob(path)
 
-
         print('Using processed data')
         
     def __len__(self):

@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from torch import nn
 from torch import Tensor
-from vq_func import quantize
+from vq_func import quantize, scl_quantize
 from typing import Optional, Tuple
 
 from torch.nn.utils.rnn import pad_packed_sequence
@@ -144,11 +144,11 @@ class Wavernn(nn.Module):
     
     
     @ex.capture
-    def encoder(self, cfg, feat, n_dim, mask):
+    def encoder(self, cfg, feat, n_dim, mask, qtz=True):
 
         '''
         Input: feat, n_dim, mask
-            - **feat**:
+            - **feat**: (batch_size, seq_length, n_dims)
             - **n_dim**:
             - **mask**: (seq_length)
         Output: c_in, r
@@ -167,16 +167,28 @@ class Wavernn(nn.Module):
             f_out = self.forward(c_in[:, :i+1, :])[:,-1,:] # inputs previous frames; predicts i+1th frame
 
             if mask[i] == 1:
+                
+                # if qtz:
                 r_s = feat[:,i,:-2] - f_out.clone()
                 r[:,i,:] = r_s
+
+                # Scalar quantization for c0
+                r_s[:,0:1] = torch.tensor(scl_quantize((r_s[:,0:1]).cpu().data.numpy(), cfg['scl_cb_path'])).to(device)
+                
+                # VQ for C1-C17
                 r_s[:,-n_dim:] = torch.tensor(quantize((r_s[:,-n_dim:]).cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
-                # r_s = torch.tensor(quantize(r_s.cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
+                
+                
                 r_qtz[:,i,:] = r_s
-            
+
                 c_in[:,i+1,:-2] = f_out + r_s
                 
+                # else:
+                #     c_in[:,i+1,:-2] = feat[:,i,:-2] + 0.01 * (torch.rand(feat.shape[0], feat.shape[-1]-2)-0.5)
+                
             else:
-                c_in[:,i+1,:-2] = f_out
+                r_qtz[:,i,:] = r_s
+                c_in[:,i+1,:-2] = f_out + r_s  # Repeat the previous the residual
 
 
         return c_in[:,1:,:], r, r_qtz
@@ -193,6 +205,8 @@ class Wavernn(nn.Module):
 
             f_out = self.forward(c[:, :i+1, :])[:,-1,:] # inputs previous frames; predicts i+1th frame
             c[:,i+1,:-2] = f_out + r[:,i+1, :]
+            
+        
 
         return c
             

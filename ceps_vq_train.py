@@ -157,11 +157,11 @@ if __name__ == '__main__':
         'n_sample_seg': 2400,
         'normalize': True,
         
-        'nb_entries': [2048], 
-        'stages': 1,
-        'n_dims': 18, 
+        'nb_entries': [2048, 2048], 
+        'stages': 2,
+        'n_dims': 17, 
         
-        'note': '1_2048_700_18',
+        'note': '2_2048_17',
         
         
         'transfer_model': '0722_001326',
@@ -199,8 +199,6 @@ if __name__ == '__main__':
     codebook = []
     for i in range(cfg['stages']):
         codebook.append(np.zeros((cfg['nb_entries'][i], cfg['n_dims'])))
-        
-    
     
     for batch_idx, inp in enumerate(train_loader):
         
@@ -230,15 +228,9 @@ if __name__ == '__main__':
             
             r_s = feat[:,i+1,:18] - f_out
             r[:,i+1,:] = r_s.clone() 
-            c_in[:,i+1,:-2] = f_out.clone() + r_s.clone() + 0.01 * torch.rand(r_s.shape).to(device)/2
-        
-#         torch.save(nm_c[:,2:-2, :18], 'samples/nm_c.pt')
-#         torch.save(c[:,2:-2, :18], 'samples/c.pt')
-#         torch.save(r, 'samples/r.pt')
-#         torch.save(f_out, 'samples/f_out.pt')
-#         torch.save(c_in, 'samples/c_in.pt')
-        
-#         fake()
+            c_in[:,i+1,:-2] = f_out.clone() + r_s.clone() + 0.01 * (torch.rand(r_s.shape)-0.5).to(device)/2
+            #  (Add error ranging from -0.0025 - 0.0025)
+            
         
         r = torch.reshape(r[:,:,-cfg['n_dims']:], (-1, cfg['n_dims'])).cpu().data.numpy() # (9000, 18)
         

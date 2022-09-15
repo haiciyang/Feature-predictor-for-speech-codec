@@ -46,17 +46,45 @@ def build_rnn(cfg):
     return model
 
 
+def generate_features(cfg, model_f, sample_name, c, nm_c, mask):
+    
+    if cfg['normalize']:
+        feat = nm_c[:, :, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
+    else:
+        feat = c[:, :, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
+
+    feat_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim'], mask = mask)     
+
+    feat_in *= MAXI
+
+    e, lpc_c, rc = ceps2lpc_v(feat_in.reshape(-1, feat_in.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
+    all_features = torch.cat((feat_in.cpu(), lpc_c.unsqueeze(0)), -1).data.numpy()
+
+    sizeof = all_features.strides[-1]
+    all_features = np.lib.stride_tricks.as_strided(
+                all_features.flatten(), 
+                shape=(10, 19, 36),
+                strides=(15*36*sizeof, 36*sizeof, sizeof)) #(10, 19, 36)
+
+    return all_features
+
+
 @ex.automain
 def run(cfg, model_label): 
     
     
     # ---- LOAD DATASETS -------
     
-    task = 'train' 
-    qtz_dataset = Libri_lpc_data(task, chunks=10, qtz=0) # return unquantized ceps and qunatized pitch
-    # dataset = Libri_lpc_data_orig(task, chunks=10, qtz=-1) # return unquantized features
-    # all_dataset = Libri_lpc_data_orig(task, chunks=10, qtz=1) # return quantized features
-    data_loader = DataLoader(qtz_dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
+    # task = 'train' 
+    # qtz_dataset = Libri_lpc_data(task='train', chunks=10, qtz=0) # return unquantized ceps and 
+    # train_data_loader = DataLoader(qtz_dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
+    
+    qtz_dataset = Libri_lpc_data(task='val', chunks=10, qtz=0) # return unquantized ceps and 
+    val_data_loader = DataLoader(qtz_dataset, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
+    
+    
+    dataset = Libri_lpc_data('val', chunks=10, qtz=-1) # return unquantized features
+    all_dataset = Libri_lpc_data('val', chunks=10, qtz=1) # return quantized features
 
     # Build model
     model_f = build_rnn().to(device)
@@ -75,80 +103,60 @@ def run(cfg, model_label):
 
     print('Saving quantized features at:', path)
     
-    if not os.path.exists(path):
-        os.mkdir(path)
+    if not os.path.exists(path+'/train/'):
+        os.mkdir(path+'/train/')
+    if not os.path.exists(path+'/val/'):
+        os.mkdir(path+'/val/')
+        
+    k = 0
+    for sample_name, x, c, nm_c in tqdm(val_data_loader):
+        
+        mask = torch.ones(nm_c.shape[1])
+        # mask[:nm_c.shape[1]//2*2] = torch.tensor((1,0)).repeat(nm_c.shape[1]//2)
+        
+        all_features = generate_features(cfg, model_f, sample_name, c, nm_c, mask)
+        np.save('{}/{}.npy'.format(path+'/val/', sample_name[0]), all_features)
+        
+        k += 1
+        if k == 1000:
+            break     
     
     k = 0
-    # for (qtz_inp, inp, all_inp) in tqdm(zip(qtz_dataset, dataset, all_dataset)):
-    for sample_name, x, c, nm_c in tqdm(data_loader):
+    for sample_name, x, c, nm_c in tqdm(train_data_loader):
         
-        if k < 5000:
-            k += 1
-            continue
+        mask = torch.ones(nm_c.shape[1])
+        # mask[:nm_c.shape[1]//2*2] = torch.tensor((1,0)).repeat(nm_c.shape[1]//2)
+    
+        all_features = generate_features(cfg, model_f, sample_name, c, nm_c, mask)
+        np.save('{}/{}.npy'.format(path+'/train/', sample_name[0]), all_features)
+       
+        k += 1
+        if k == 5000:
+            break
             
+    
         
-#         # Calculate the average error between features and LPCNet original quantized features
-#         orig_nm_c = torch.unsqueeze(inp[-1], 0)[:, 2:-2, :-16].to(torch.float).to(device)
-#         qtz_nm_c = torch.unsqueeze(all_inp[-1], 0)[:, 2:-2, :-16].to(torch.float).to(device)
+#     for (qtz_inp, inp, all_inp) in tqdm(zip(qtz_dataset, dataset, all_dataset)): 
+#          # Calculate the average error between features and LPCNet original quantized features
         
-#         ori = torch.sum((qtz_nm_c[:, 1:, :] - orig_nm_c[:, 1:, :]) ** 2)
-#         original.append(ori.cpu().data.numpy())
-        
+#         orig_c = torch.unsqueeze(inp[-2], 0)[:, 2:-2, :].to(torch.float).to(device)
+#         qtz_c = torch.unsqueeze(all_inp[-2], 0)[:, 2:-2, :].to(torch.float).to(device)
         
 #         # Feature predictive coding
 #         c = torch.unsqueeze(qtz_inp[-2], 0)
 #         nm_c = torch.unsqueeze(qtz_inp[-1], 0)
         
-        # nm_c - (10, 19, 36)
+#         mask = torch.ones(nm_c.shape[1])
+#         all_features = generate_features(cfg, model_f, '', c, nm_c, mask)
         
-        if cfg['normalize']:
-            feat = nm_c[:, :, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
-        else:
-            feat = c[:, :, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
         
-        mask = torch.ones(nm_c.shape[1])
-        # mask[:nm_c.shape[1]//2*2] = torch.tensor((1,0)).repeat(nm_c.shape[1]//2)
+#         torch.save(orig_c, 'samples/orig_c.pt')
+#         torch.save(qtz_c, 'samples/qtz_c.pt')
+#         torch.save(all_features, 'samples/all_features.pt')
+        
+#         break
+        
 
-        feat_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim'], mask = mask)     
-        
-        # feat_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim'], mask = mask) # (bt, seq_length, n_dim)
-        feat_in *= MAXI
-        
-        e, lpc_c, rc = ceps2lpc_v(feat_in.reshape(-1, feat_in.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
-        
-        all_features = torch.cat((feat_in.cpu(), lpc_c.unsqueeze(0)), -1).data.numpy()
-        
-        sizeof = all_features.strides[-1]
-        all_features = np.lib.stride_tricks.as_strided(
-                    all_features.flatten(), 
-                    shape=(10, 19, 36),
-                    strides=(15*36*sizeof, 36*sizeof, sizeof)) #(10, 19, 36)
-        
-        np.save('{}/{}.npy'.format(path, sample_name[0]), all_features)
-        # fake()
-        
-        k += 1
-        
-        
-        # torch.save(all_features, '{}/{}.pt'.format(path, sample_name[0]))
-        
-        
-#         torch.save(nm_c[:,2:-2, :18], 'samples/nm_feat.pt')
-#         torch.save(feat_in, 'samples/feat_in.pt')
-#         torch.save(r, 'samples/r.pt')
-#         torch.save(r_qtz, 'samples/r_qtz.pt')
-
-#         pre = torch.sum((feat_in[:, 1:, :] - orig_nm_c[:, 1:, :]) ** 2)
-#         pred.append(pre.cpu().data.numpy())
-        
-        # print('({:2f}, {:2f}), ({:2f}, {:2f})'.format(ori.cpu().data, pre.cpu().data, np.mean(original), np.mean(pred)))
-        
-        # break
-        
-    # np.save('1_1024_original.npy', original)
-    # np.save('1_2048_18_pred.npy', pred)
-        
-        # feat_out = model_f.decoder(r=r, inp=inp)
         
         
         

@@ -155,3 +155,18 @@ def quantize(r, n_entries, cb_path):
     
     return qr
 
+
+def scl_quantize(data, cb_path):
+    # data - (seq_length, 1)
+    # code - (n_code, 1)
+    
+    codes = np.load(cb_path)
+    
+    dist_mat = (data - codes) ** 2 # (n_code, seq_length)
+    argmin = np.argmin(dist_mat, 0) # (seq_length)
+    
+    codes = codes.squeeze()
+    
+    q_data = np.array([codes[int(i)] for i in argmin])
+    
+    return q_data
