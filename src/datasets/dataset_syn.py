@@ -28,12 +28,12 @@ class Libri_lpc_data_syn(Dataset):
         self.chunks = chunks
         
 
-        path = '/media/sdb1/Data/librispeech/dev-clean/*/*/*.wav'
+        path = '/data/hy17/librispeech/librispeech/dev-clean/*/*/*.wav'
         
         self.files = glob.glob(path)
         
-        self.feature_qtz_folder = '/media/sdb1/Data/libri_lpc_qtz_pt/val/'
-        self.feature_folder = '/media/sdb1/Data/libri_lpc_pt/val/'
+        self.feature_qtz_folder = '/data/hy17/librispeech/libri_lpc_qtz_pt/val/'
+        self.feature_folder = '/data/hy17/librispeech/libri_lpc_pt/val/'
 
         print('Using original data')
         

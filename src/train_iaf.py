@@ -15,11 +15,11 @@ from torch.distributions.normal import Normal
 from torch.utils.data import Dataset, DataLoader
 
 import utils
-from wavenet import Wavenet
-from wavenet_iaf import Wavenet_IAF
-from dataset import Libri_lpc_data
-from dataset_orig import Libri_lpc_data_orig
-from modules import ExponentialMovingAverage, GaussianLoss
+from models.wavenet import Wavenet
+from models.wavenet_iaf import Wavenet_IAF
+from datasets.dataset import Libri_lpc_data
+from datasets.dataset_orig import Libri_lpc_data_orig
+from models.modules import ExponentialMovingAverage, GaussianLoss
 
 from config import ex
 from sacred import Experiment
@@ -279,7 +279,7 @@ def synthesize(model_t, model_s, ema=None):
 def run(cfg, model_label): 
     
     # ----- Wirte and print the hyper-parameters -------
-    result_path = 'results/'+ model_label +'.txt'
+    result_path = '../results/'+ model_label +'.txt'
     if not cfg['debugging']:
         with open(result_path, 'a+') as file:
             file.write(model_label+'\n')
@@ -304,7 +304,7 @@ def run(cfg, model_label):
     
     if cfg['transfer_model'] is not None:
         
-        transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model']), str(cfg['transfer_model']), str(cfg['transfer_epoch']))
+        transfer_model_path = '../saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model']), str(cfg['transfer_model']), str(cfg['transfer_epoch']))
         print("Load checkpoint from: {}".format(transfer_model_path))
         model.load_state_dict(torch.load(transfer_model_path))
         
@@ -314,7 +314,7 @@ def run(cfg, model_label):
         wn_model = build_wn_model()
         wn_model.to(device)
         
-        wn_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['wn_model']), str(cfg['wn_model']), str(cfg['transfer_epoch']))
+        wn_model_path = '../saved_models/{}/{}_{}.pth'.format(str(cfg['wn_model']), str(cfg['wn_model']), str(cfg['transfer_epoch']))
         print("Load checkpoint from: {}".format(wn_model_path))
         wn_model.load_state_dict(torch.load(wn_model_path))
 

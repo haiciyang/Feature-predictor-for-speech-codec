@@ -20,14 +20,13 @@ from torch.nn.utils.rnn import pad_packed_sequence
 from torch.nn.utils.rnn import pack_padded_sequence
 
 import utils
-from wavernn import Wavernn
-from wavenet import Wavenet
-from vq_func import quantize
-from dataset import Libri_lpc_data
-from ceps2lpc_vct import ceps2lpc_v
+from models.wavernn import Wavernn
+from quantization.vq_func import vq_quantize, scl_quantize
+from datasets.dataset import Libri_lpc_data
+from ceps2lpc.ceps2lpc_vct import ceps2lpc_v
 # from dataset_orig import Libri_lpc_data_orig
-from dataset_syn import Libri_lpc_data_syn
-from modules import ExponentialMovingAverage, GaussianLoss
+from datasets.dataset_syn import Libri_lpc_data_syn
+from models.modules import ExponentialMovingAverage, GaussianLoss
 
 from config import ex
 from sacred import Experiment
@@ -41,9 +40,14 @@ MAXI = 24.1
 def saveaudio(wave, model_label, sample_name):
     
     out_wav = wave.flatten().squeeze().cpu().numpy()
-    wav_name = 'samples/{}/{}_truth.wav'.format(model_label, sample_name)
+    wav_name = '../samples/{}/{}_truth.wav'.format(model_label, sample_name)
     # torch.save(out_wav, 'samples/{}/{}_{}_{}.pt'.format(cfg['model_label_s'], cfg['note'], tp, str(ns)))
-    sf.write(wav_name, out_wav/max(abs(out_wav)), 16000, 'PCM_16')
+    
+    out_wav /= np.std(out_wav)
+    out_wav /= max(abs(out_wav))
+    
+                        
+    sf.write(wav_name, out_wav, 16000, 'PCM_16')
     
     
 @ex.capture
@@ -52,7 +56,7 @@ def savefig(cfg, data, tp, ns):
     # data - (1, n_frames, n_dim)
     
     data = data[0].cpu().data.numpy()
-    file_name = 'samples/{}/{}_{}_{}_{}.jpg'.format(cfg['model_label_s'], cfg['note'], cfg['epoch_s'], tp, str(ns))
+    file_name = '../samples/{}/{}_{}_{}_{}.jpg'.format(cfg['model_label_s'], cfg['note'], cfg['epoch_s'], tp, str(ns))
     # torch.save(out_wav, 'samples/{}/{}_{}_{}.pt'.format(cfg['model_label_s'], cfg['note'], tp, str(ns)))
     plt.imshow(data.T, origin='lower', aspect='auto')
     plt.colorbar()
@@ -66,10 +70,10 @@ def synthesis(cfg):
     model_label_f = cfg['model_label_f']
     # model_label_s = cfg['model_label_s']
     
-    if not os.path.exists('samples/'+model_label_f):
-        os.mkdir('samples/'+model_label_f)
+    if not os.path.exists('../samples/'+model_label_f):
+        os.mkdir('../samples/'+model_label_f)
     
-    path_f = 'saved_models/'+ model_label_f + '/' + model_label_f + '_'+ str(cfg['epoch_f']) +'.pth'
+    path_f = '../saved_models/'+ model_label_f + '/' + model_label_f + '_'+ str(cfg['epoch_f']) +'.pth'
     
 
     model_f = Wavernn(in_features = 20, 
@@ -82,25 +86,7 @@ def synthesis(cfg):
     model_f.load_state_dict(torch.load(path_f))
     model_f.eval()
     
-    
-#     path_s = 'saved_models/'+ model_label_s + '/' + model_label_s + '_'+ str(cfg['epoch_s']) +'.pth'
-#     model_s = Wavenet(out_channels=2,
-#                     num_blocks=cfg['num_blocks'],
-#                     num_layers=cfg['num_layers'],
-#                     inp_channels=cfg['inp_channels'],
-#                     residual_channels=cfg['residual_channels'],
-#                     gate_channels=cfg['gate_channels'],
-#                     skip_channels=cfg['skip_channels'],
-#                     kernel_size=cfg['kernel_size'],
-#                     cin_channels=cfg['cin_channels']+64,
-#                     cout_channels=cfg['cout_channels'],
-#                     upsample_scales=[10, 16],
-#                     local=cfg['local'],
-#                     fat_upsampler=cfg['fat_upsampler']).to(device)
-#     model_s.load_state_dict(torch.load(path_s))
-#     model_s.eval()
-    
-    # print("Load checkpoint from: {}, {}".format(path_f, path_s))
+
     print("Load checkpoint from: {}".format(path_f))
     
     length = cfg['total_secs']*cfg['sr']
@@ -115,31 +101,39 @@ def synthesis(cfg):
     
     results = []
     
+    l1 = 0.075
+    l2 = 0.075
+    
 
     for ns, (sample_name, sample, nm_c, qtz_c) in enumerate(test_loader):
         
-        if ns >= cfg['num_samples']:
-            break
+        # if ns >= cfg['num_samples']:
+        #     break
         
         # Non-mask
-        mask = torch.ones(nm_c.shape[1])
         
-        feat = nm_c[:,:,:-16].to('cuda')
-        c_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim'], mask = mask)     
+        saveaudio(sample, model_label_f, sample_name[0])
+
+#         mask = torch.ones(nm_c.shape[1])
         
-        c_in *= MAXI
+#         feat = nm_c[:,:,:-16].to('cuda')
+#         c_in, r, r_qtz = model_f.encoder(cfg=cfg, feat=feat, n_dim=cfg['code_dim'], mask = mask, l1=l1, l2=l2, vq_quantize=vq_quantize, scl_quantize=scl_quantize)      
+#         c_in *= MAXI
         
-        e, lpc_c, rc = ceps2lpc_v(c_in.reshape(-1, c_in.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
-        all_features = torch.cat((c_in.cpu(), lpc_c.unsqueeze(0)), -1)
+#         e, lpc_c, rc = ceps2lpc_v(c_in.reshape(-1, c_in.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
+#         all_features = torch.cat((c_in.cpu(), lpc_c.unsqueeze(0)), -1)
         
-        np.save('samples/{}/{}_cin.npy'.format(model_label_f, sample_name[0]), \
-                all_features.cpu().data.numpy())
+#         # all_features = torch.cat((c_in.cpu(), qtz_c[:,:,-16:]), -1)
+        
+#         np.save('../samples/{}/{}_cin_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), all_features.cpu().data.numpy())
+#         np.save('../samples/{}/{}_r_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), r.cpu().data.numpy())
         
         # 1-0 mask
-        mask[:nm_c.shape[1]//2*2] = torch.tensor((1,0)).repeat(nm_c.shape[1]//2)
+        # mask[:nm_c.shape[1]//2*2] = torch.tensor((1,0)).repeat(nm_c.shape[1]//2)
+        mask = None
         
         feat = nm_c[:,:,:-16].to('cuda')
-        c_in, r, r_qtz = model_f.encoder(feat=feat, n_dim=cfg['code_dim'], mask = mask)     
+        c_in, r, r_qtz = model_f.encoder(cfg=cfg, feat=feat, n_dim=cfg['code_dim'], mask = mask, l1=l1, l2=l2, vq_quantize=vq_quantize, scl_quantize=scl_quantize)     
         
         c_in *= MAXI
         
@@ -147,35 +141,17 @@ def synthesis(cfg):
         all_features = torch.cat((c_in.cpu(), lpc_c.unsqueeze(0)), -1)
         
 
-        np.save('samples/{}/{}_cin_mask.npy'.format(model_label_f, sample_name[0]), \
+        np.save('../samples/{}/{}_cin_thrd_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), \
                 all_features.cpu().data.numpy())
         
-        np.save('samples/{}/{}_qtz.npy'.format(model_label_f, sample_name[0]), \
-                qtz_c.cpu().data.numpy())
+        np.save('../samples/{}/{}_r_thrd_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), \
+                r.cpu().data.numpy())
         
-        fake()
+        # np.save('../samples/{}/{}_qtz.npy'.format(model_label_f, sample_name[0]), \
+                # qtz_c.cpu().data.numpy())
         
-        r_qtz = r_qtz * mask[None, :, None].to('cuda')
-        # c_in 
-        c_out = model_f.decoder(r=r_qtz, feat=feat)
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        np.save('samples/{}/{}_cin.npy'.format(model_label_f, sample_name[0]), \
-                all_features.cpu().data.numpy())
-        np.save('samples/{}/{}_qtzc.npy'.format(model_label_f, sample_name[0]), \
-                qtz_c.cpu().data.numpy())
-        
-        saveaudio(sample, model_label_f, sample_name[0])
-        
-        fake()
-        
+        # fake()
+        break
         
         
 #         if cfg['normalize']:

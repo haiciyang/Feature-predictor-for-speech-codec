@@ -21,11 +21,11 @@ from torch.distributions.normal import Normal
 from torch.utils.data import Dataset, DataLoader
 
 import utils
-from wavenet import Wavenet
-from wavernn import Wavernn
-from dataset import Libri_lpc_data
-from dataset_orig import Libri_lpc_data_orig
-from modules import ExponentialMovingAverage, GaussianLoss
+from models.wavenet import Wavenet
+from models.wavernn import Wavernn
+from datasets.dataset import Libri_lpc_data
+from datasets.dataset_orig import Libri_lpc_data_orig
+from models.modules import ExponentialMovingAverage, GaussianLoss
 
 from config import ex
 from sacred import Experiment
@@ -58,7 +58,7 @@ def build_model(cfg):
 def saveaudio(cfg, wave, tp, ns):
     
     out_wav = wave.flatten().squeeze().cpu().numpy()
-    wav_name = 'samples/{}/{}_{}_{}_{}_predf.wav'.format(cfg['model_label_s'], cfg['model_label_f'], cfg['note'], tp, str(ns))
+    wav_name = '../samples/{}/{}_{}_{}_{}_predf.wav'.format(cfg['model_label_s'], cfg['model_label_f'], cfg['note'], tp, str(ns))
     # torch.save(out_wav, 'samples/{}/{}_{}_{}_{}_predf.pt'.format(cfg['model_label_s'], cfg['model_label_f'], tp, str(ns)))
     sf.write(wav_name, out_wav/max(abs(out_wav)), 16000, 'PCM_16')
     
@@ -67,7 +67,7 @@ def draw_cmp(cfg, wav, note, ns):
     
     plt.imshow(wav.detach().cpu().numpy(), origin='lower', aspect='auto')
     plt.colorbar()
-    plt.savefig('samples/{}/{}_{}_{}.jpg'.format(cfg['model_label_f'], note, cfg['epoch_f'], ns))
+    plt.savefig('../samples/{}/{}_{}_{}.jpg'.format(cfg['model_label_f'], note, cfg['epoch_f'], ns))
     plt.clf()
 
     # etp = utils.cal_entropy((wav.flatten().detach().cpu().numpy()))
@@ -97,10 +97,10 @@ def synthesis(cfg):
     
     model_label_f = cfg['model_label_f']
     
-    if not os.path.exists('samples/'+model_label_f):
-        os.mkdir('samples/'+model_label_f)
+    if not os.path.exists('../samples/'+model_label_f):
+        os.mkdir('../samples/'+model_label_f)
     
-    path_f = 'saved_models/'+ model_label_f + '/' + model_label_f + '_'+ str(cfg['epoch_f']) +'.pth'
+    path_f = '../saved_models/'+ model_label_f + '/' + model_label_f + '_'+ str(cfg['epoch_f']) +'.pth'
     
     model_f = Wavernn(in_features = 20, 
                     gru_units1 = cfg['gru_units1'],
@@ -127,7 +127,7 @@ def synthesis(cfg):
     
     results = []
     
-    for _, sample, c, nm_c in tqdm(test_loader):
+    for sample_name, sample, c, nm_c in tqdm(test_loader):
 
         # ----- Load and prepare data ----
         # sample = sample[:,:,160:].to(torch.float).to(device) # (1, 1, tot_chunks*2400)
@@ -139,9 +139,11 @@ def synthesis(cfg):
 
         output = model_f(feat) # (B, L, C)
 
-        feat = torch.transpose(feat[:, :, :cfg['fc_units']], 1,2) # (bt, C, L-1)
-        output = torch.transpose(output, 1,2) # (bt, C, L)
+        # feat = torch.transpose(feat[:, :, :cfg['fc_units']], 1,2) # (bt, C, L-1)
+        # output = torch.transpose(output, 1,2) # (bt, C, L)
 
+        feat = torch.transpose(feat[:, :, :18], 1,2) # (bt, C, L-1)
+        output = torch.transpose(output[:, :, :18], 1,2) # (bt, C, L)
 
 #             # --- When feat_out are sampels ---- 
         frames_out = output[0,:,:-1]
@@ -176,6 +178,6 @@ def synthesis(cfg):
     print('spec_out', np.round(ave_r[1].data.numpy(),4))
     print('adj_res_tr', np.round(ave_r[2].data.numpy(),4))
     print('residual', np.round(ave_r[4].data.numpy(),4))
-    torch.save(results, 'samples/{}/eval_result_{}.pt'.format(cfg['model_label_f'], cfg['epoch_f']))
+    torch.save(results, '../samples/{}/eval_result_{}.pt'.format(cfg['model_label_f'], cfg['epoch_f']))
             
             

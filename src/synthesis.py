@@ -19,10 +19,10 @@ from torchaudio import transforms
 from torch.utils.data import Dataset, DataLoader
 
 import utils
-from wavenet import Wavenet
-from dataset import Libri_lpc_data
-from dataset_orig import Libri_lpc_data_orig
-from modules import ExponentialMovingAverage, GaussianLoss
+from models.wavenet import Wavenet
+from datasets.dataset import Libri_lpc_data
+from datasets.dataset_orig import Libri_lpc_data_orig
+from models.modules import ExponentialMovingAverage, GaussianLoss
 
 from config import ex
 from sacred import Experiment
@@ -54,8 +54,8 @@ def build_model(cfg):
 def saveaudio(cfg, wave, tp, ns):
     
     out_wav = wave.flatten().squeeze().cpu().numpy()
-    wav_name = 'samples/{}/{}_{}_{}_{}.wav'.format(cfg['model_label'], cfg['note'], cfg['epoch'], tp, str(ns))
-    torch.save(out_wav, 'samples/{}/{}_{}_{}.pt'.format(cfg['model_label'], cfg['note'], tp, str(ns)))
+    wav_name = '../samples/{}/{}_{}_{}_{}.wav'.format(cfg['model_label'], cfg['note'], cfg['epoch'], tp, str(ns))
+    torch.save(out_wav, '../samples/{}/{}_{}_{}.pt'.format(cfg['model_label'], cfg['note'], tp, str(ns)))
     sf.write(wav_name, out_wav/max(abs(out_wav)), 16000, 'PCM_16')
 
 @ex.automain
@@ -63,10 +63,10 @@ def synthesis(cfg):
     # 3s speech
     model_label = str(cfg['model_label'])
     
-    path = 'saved_models/'+ model_label + '/' + model_label + '_'+ str(cfg['epoch']) +'.pth'
+    path = '../saved_models/'+ model_label + '/' + model_label + '_'+ str(cfg['epoch']) +'.pth'
     
-    if not os.path.exists('samples/'+model_label):
-        os.mkdir('samples/'+model_label)
+    if not os.path.exists('../samples/'+model_label):
+        os.mkdir('../samples/'+model_label)
     
     model = build_model()
     print("Load checkpoint from: {}".format(path))

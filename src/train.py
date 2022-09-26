@@ -15,12 +15,12 @@ from torch.distributions.normal import Normal
 from torch.utils.data import Dataset, DataLoader
 
 import utils
-from wavenet import Wavenet
-from dataset import Libri_lpc_data
-from ceps2lpc_vct import ceps2lpc_v
-from dataset_orig import Libri_lpc_data_orig
-from dataset_retrain import Libri_lpc_data_retrain
-from modules import ExponentialMovingAverage, GaussianLoss
+from models.wavenet import Wavenet
+from datasets.dataset import Libri_lpc_data
+from ceps2lpc.ceps2lpc_vct import ceps2lpc_v
+from datasets.dataset_orig import Libri_lpc_data_orig
+from datasets.dataset_retrain import Libri_lpc_data_retrain
+from models.modules import ExponentialMovingAverage, GaussianLoss
 
 from config import ex
 from sacred import Experiment
@@ -153,15 +153,15 @@ def train(model, optimizer, train_loader, epoch, model_label, debugging, cin_cha
         if batch_idx == 0:
 
             if not os.path.exists('samples/'+model_label):
-                os.mkdir('samples/'+model_label)
+                os.mkdir('../samples/'+model_label)
             
             exc_out = utils.sample_from_gaussian(exc_dist[0:1, :, :])
             plt.plot(exc_out[0,:,0].detach().cpu().numpy())
-            plt.savefig('samples/{}/exc_out_{}.jpg'.format(model_label, epoch))
+            plt.savefig('../samples/{}/exc_out_{}.jpg'.format(model_label, epoch))
             plt.clf()
             
             plt.plot(exc[0,0,:].detach().cpu().numpy())
-            plt.savefig('samples/{}/exc_{}.jpg'.format(model_label, epoch))
+            plt.savefig('../samples/{}/exc_{}.jpg'.format(model_label, epoch))
             plt.clf()
         
         if batch_idx % display_step == 0 and batch_idx != 0:
@@ -223,7 +223,7 @@ def evaluate(model, test_loader, debugging, cin_channels, inp_channels, stft_los
 def run(cfg, model_label): 
     
     # ----- Wirte and print the hyper-parameters -------
-    result_path = 'results/'+ model_label +'.txt'
+    result_path = '../results/'+ model_label +'.txt'
     if not cfg['debugging']:
         with open(result_path, 'a+') as file:
             file.write(model_label+'\n')
@@ -250,7 +250,7 @@ def run(cfg, model_label):
     
     if cfg['transfer_model_s'] is not None:
         
-        transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model_s']), str(cfg['transfer_model_s']), str(cfg['transfer_epoch_s']))
+        transfer_model_path = '../saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model_s']), str(cfg['transfer_model_s']), str(cfg['transfer_epoch_s']))
         print("Load checkpoint from: {}".format(transfer_model_path))
         
         

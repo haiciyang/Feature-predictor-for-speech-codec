@@ -126,12 +126,12 @@ def cal_entropy(x):
 
 def checkpoint(debugging, epoch, batch_id, duration, model_label, state_dict, train_loss, valid_loss, min_loss):
 
-    result_path = 'results/'+ model_label +'.txt'
-    if not os.path.exists('saved_models/'+model_label):
-        os.mkdir('saved_models/'+model_label)
+    result_path = '../results/'+ model_label +'.txt'
+    if not os.path.exists('../saved_models/'+model_label):
+        os.mkdir('../saved_models/'+model_label)
     
     
-    model_path = 'saved_models/'+ model_label + '/' + model_label + '_' +str(epoch) 
+    model_path = '../saved_models/'+ model_label + '/' + model_label + '_' +str(epoch) 
 
     if state_dict is not None: # when an epoch is finished
         # print(epoch, duration, train_loss, valid_loss)

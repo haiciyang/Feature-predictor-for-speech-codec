@@ -21,9 +21,9 @@ def my_config():
             'n_seg': 15, 
             'orig': True,
             'normalize': True, 
-            'qtz': False,
-            'scl_cb_path': 'codebook/scalar_center_32.npy',
-            'cb_path': 'codebook/ceps_vq_codebook_1_2048_large_17.npy',
+            'qtz': True,
+            'scl_cb_path': '../codebook/scalar_center_256.npy',
+            'cb_path': '../codebook/ceps_vq_codebook_1_2048_large_17.npy',
             'n_entries': [2048],
             'code_dim': 17,
             

@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from torch import nn
 from torch import Tensor
-from vq_func import quantize, scl_quantize
+# from quantization.vq_func import quantize, scl_quantize
 from typing import Optional, Tuple
 
 from torch.nn.utils.rnn import pad_packed_sequence
@@ -48,7 +48,7 @@ class Wavernn(nn.Module):
         # self.loc_attn = LocationAwareAttention(hidden_dim = attn_units, smoothing=True)
 
 
-    def forward(self, x: Tensor) -> Tensor :
+    def forward(self, x: Tensor, h1=None, h2=None) -> Tensor :
         
         """
         Input: x - (bt, L, C)
@@ -56,11 +56,12 @@ class Wavernn(nn.Module):
         
         # x = self.loop_attention(x)
         
-        x, _ = self.rnn1(x) 
+        x, h1 = self.rnn1(x, h1) 
         # if self.bidirectional == True:
         #     x = slef.take_mean(x)   # x - (bt, L, rnn_out)
         # print(x.shape)
-        x, _ = self.rnn2(x) 
+        # x = self.loop_attention(x)
+        x, h2 = self.rnn2(x, h2) 
         # if self.bidirectional == True:
         #     x = slef.take_mean(x)   # x - (bt, L, rnn_out)
         
@@ -81,7 +82,7 @@ class Wavernn(nn.Module):
         
         # x = self.loop_attention(x)
 
-        return x#, out_lens
+        return x, h1, h2#, out_lens
 
     def loop_attention(self, x: Tensor, attn_range: int = 10) -> Tensor :
         
@@ -143,8 +144,8 @@ class Wavernn(nn.Module):
         return y
     
     
-    @ex.capture
-    def encoder(self, cfg, feat, n_dim, mask, qtz=True):
+    # @ex.capture
+    def encoder(self, cfg, feat, n_dim, mask, l1, l2, vq_quantize, scl_quantize, qtz=1):
 
         '''
         Input: feat, n_dim, mask
@@ -160,42 +161,52 @@ class Wavernn(nn.Module):
         c_in[:,1:,-2:] = feat[:,:,-2:]
         r = torch.zeros(B, L, 18).to(device)
         r_qtz = torch.zeros(B, L, 18).to(device)
-        
+        h1 = h2 = None
 
+        num_ind1 = 0
+        num_ind2 = 0
         for i in range(c_in.shape[1]-1):
 
-            f_out = self.forward(c_in[:, :i+1, :])[:,-1,:] # inputs previous frames; predicts i+1th frame
+            f_out, h1, h2 = self.forward(c_in[:, :i+1, :], h1, h2)# inputs previous frames; predicts i+1th frame
+            f_out = f_out[:,-1,:] 
+            r_s = feat[:,i,:-2] - f_out.clone()
+            # r[:,i,:] = r_s
+            
+            # --- Define indicator for scalar quantization and VQ --- 
+            if mask is None: # Use threshold
+                ind1 = abs(r_s[0,0]) > l1
+                ind2 = abs(torch.sum(r_s[0,1:])) > l2
+            if mask is not None: # Use input mask
+                ind1 = ind2 = mask[i]
+            
+            # --- Scalar quantization for c0 ---
+            if ind1:
+                num_ind1 += 1
+                r[:,i,0:1] = r_s[:,0:1]
+                if qtz:
+                    r_s[:,0:1] = torch.tensor(scl_quantize((r_s[:,0:1]).cpu().data.numpy(), cfg['scl_cb_path'])).to(device)
+                    r_qtz[:,i,0:1] = r_s[:,0:1]
 
-            if mask[i] == 1:
-                
-                # if qtz:
-                r_s = feat[:,i,:-2] - f_out.clone()
-                r[:,i,:] = r_s
-
-                # Scalar quantization for c0
-                r_s[:,0:1] = torch.tensor(scl_quantize((r_s[:,0:1]).cpu().data.numpy(), cfg['scl_cb_path'])).to(device)
-                
-                # VQ for C1-C17
-                r_s[:,-n_dim:] = torch.tensor(quantize((r_s[:,-n_dim:]).cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
                 
                 
-                r_qtz[:,i,:] = r_s
-
-                c_in[:,i+1,:-2] = f_out + r_s
-                
-                # else:
-                #     c_in[:,i+1,:-2] = feat[:,i,:-2] + 0.01 * (torch.rand(feat.shape[0], feat.shape[-1]-2)-0.5)
-                
+            # --- VQ for C1-C17 ---
+            if ind2:
+                num_ind2 += 1
+                r[:,i,1:] = r_s[:,1:]
+                if qtz:
+                    r_s[:,-n_dim:] = torch.tensor(vq_quantize((r_s[:,-n_dim:]).cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
+                    r_qtz[:,i,-n_dim:] = r_s[:,-n_dim:]
+            
+            if qtz:
+                c_in[:,i+1,:-2] = f_out + r_qtz[:,i,:]
             else:
-                r_qtz[:,i,:] = r_s
-                c_in[:,i+1,:-2] = f_out + r_s  # Repeat the previous the residual
-
-
-        return c_in[:,1:,:], r, r_qtz
+                c_in[:,i+1,:-2] = f_out + r[:,i,:] + 0.01 * (torch.rand(f_out.shape)-0.5).to(device)/2
+        
+        # print(num_ind1 / L, num_ind2 / L)
+        return c_in[:,1:,:], r, r_qtz, num_ind1 / L, num_ind2 / L
     
     @ex.capture
-    def decoder(self, cfg, r, feat):
-
+    def decoder(self, cfg, feat, r):
 
 
         c = torch.zeros(feat.shape).to(device) # (B, L, C)
@@ -207,7 +218,6 @@ class Wavernn(nn.Module):
             c[:,i+1,:-2] = f_out + r[:,i+1, :]
             
         
-
         return c
             
           

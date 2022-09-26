@@ -131,7 +131,7 @@ def quantize_mstage(x, n_entries, CEPS_CODEBOOK):
     return csum
 
 
-def quantize(r, n_entries, cb_path):
+def vq_quantize(r, n_entries, cb_path):
     
     '''
     Input - features (batch_size, ndims)
@@ -162,11 +162,11 @@ def scl_quantize(data, cb_path):
     
     codes = np.load(cb_path)
     
-    dist_mat = (data - codes) ** 2 # (n_code, seq_length)
+    dist_mat = (data.T - codes) ** 2 # (n_code, seq_length)
     argmin = np.argmin(dist_mat, 0) # (seq_length)
     
     codes = codes.squeeze()
     
     q_data = np.array([codes[int(i)] for i in argmin])
     
-    return q_data
+    return q_data[:,None]

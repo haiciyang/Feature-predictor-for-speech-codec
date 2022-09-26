@@ -7,11 +7,7 @@ params/
 loss/
 .ipynb_checkpoints/
 __pycache__/
-B
 *.npy
 *.jpg
 *.ipynb
-C
-C
-/
 

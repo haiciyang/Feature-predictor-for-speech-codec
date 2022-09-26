@@ -20,10 +20,10 @@ from torch.nn.utils.rnn import pad_packed_sequence
 from torch.nn.utils.rnn import pack_padded_sequence
 
 import utils
-from wavernn import Wavernn
-from dataset import Libri_lpc_data
-from dataset_orig import Libri_lpc_data_orig
-from modules import ExponentialMovingAverage, GaussianLoss
+from models.wavernn import Wavernn
+from datasets.dataset import Libri_lpc_data
+from datasets.dataset_orig import Libri_lpc_data_orig
+from models.modules import ExponentialMovingAverage, GaussianLoss
 
 # from config_frame import ex
 # from sacred import Experiment
@@ -70,8 +70,7 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
         else:
             inp = feat
  
-        if 
-        feat_out = model(inp) # (B, L, C)
+        feat_out, _, _ = model(inp) # (B, L, C)
         
 #         print(feat_out.shape)
 #         fake()
@@ -104,22 +103,22 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
 
         if batch_idx == 0 and epoch % 20 == 0:
             
-            if not os.path.exists('samples/'+model_label):
-                os.mkdir('samples/'+model_label)
+            if not os.path.exists('../samples/'+model_label):
+                os.mkdir('../samples/'+model_label)
            
             
             # feat_out = nm_feat_out * MAXI
 
             plt.imshow(feat_out[0, :-1, :].detach().cpu().numpy(), origin='lower', aspect='auto')
             plt.colorbar()
-            plt.savefig('samples/{}/feat_out_{}.jpg'.format(model_label, epoch))
+            plt.savefig('../samples/{}/feat_out_{}.jpg'.format(model_label, epoch))
             plt.clf()
             
             # plt.imshow((feat[0, 1:-1, :fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
             plt.imshow((feat[0, 1:, :fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
             # plt.imshow((feat[0, 1:, :fc_units]-feat[0, :-1,:fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
             plt.colorbar()
-            plt.savefig('samples/{}/feat_{}.jpg'.format(model_label, epoch))
+            plt.savefig('../samples/{}/feat_{}.jpg'.format(model_label, epoch))
             plt.clf()
 
              
@@ -145,7 +144,7 @@ def evaluate(model, test_loader, padding, packing, fc_units, normalize, debuggin
         else:
             inp = feat
         
-        feat_out = model(inp) # (B, L, C)
+        feat_out, _, _ = model(inp) # (B, L, C)
     
         # loss = mseloss(feat_out, feat[:,1:-1,:fc_units])
         loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units])
@@ -192,10 +191,10 @@ if __name__ == '__main__':
         'packing': False,
         'normalize': False, 
         
-        'gru_units1': 64,
+        'gru_units1': 128,
         'gru_units2': 64,
         'fc_units': 18, 
-        'attn_units': 20,
+        'attn_units': 128,
         'rnn_layers': 2, 
         'bidirectional':False,
         
@@ -206,7 +205,7 @@ if __name__ == '__main__':
     }
     
     # ----- Wirte and print the hyper-parameters -------
-    result_path = 'results/'+ model_label +'.txt'
+    result_path = '../results/'+ model_label +'.txt'
     
     if not cfg['debugging']:
         with open(result_path, 'a+') as file:
@@ -238,7 +237,7 @@ if __name__ == '__main__':
     
     if cfg['transfer_model'] is not None:
         
-        transfer_model_path = 'saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model']), str(cfg['transfer_model']), str(cfg['transfer_epoch']))
+        transfer_model_path = '../saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model']), str(cfg['transfer_model']), str(cfg['transfer_epoch']))
         print("Load checkpoint from: {}".format(transfer_model_path))
         model.load_state_dict(torch.load(transfer_model_path))
 
