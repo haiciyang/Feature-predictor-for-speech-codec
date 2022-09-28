@@ -74,12 +74,12 @@ if __name__ == '__main__':
         
         # 'cb_path': '../codebooks/ceps_vq_codebook_2_1024_17.npy',
         'cb_path': '',
-        'n_entries': [1024, 1024], 
+        'n_entries': [1024,1024], 
         'stages': 2,
         'code_dims': 17, 
-        'scl_cb_path': '../codebooks/scalar_center_256.npy',
+        # 'scl_cb_path': '../codebooks/scalar_center_256.npy',
         
-        'note': '2_1024',
+        'note': '2_1024_25',
         
         
         'transfer_model': '0722_001326',
@@ -112,7 +112,7 @@ if __name__ == '__main__':
     else:
         train_dataset = Libri_lpc_data('train', tot_chunks)
         
-    train_loader = DataLoader(train_dataset, batch_size=700, shuffle=False, num_workers=0, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=5000, shuffle=False, num_workers=0, pin_memory=True)
     
     if cfg['cb_path']:
         codebook = np.load(cfg['cb_path'])
@@ -121,8 +121,10 @@ if __name__ == '__main__':
         for i in range(cfg['stages']):
             codebook.append(np.zeros((cfg['n_entries'][i], cfg['code_dims'])))
     
-    l1 = 0.02
-    l2 = 0.05
+    
+    # l1 = 0.07
+    # l2 = 0.23
+    l2 = 0.17
     
     
     for batch_idx, inp in enumerate(train_loader):
@@ -141,14 +143,27 @@ if __name__ == '__main__':
             feat = c[:, 2:-2, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
 
 
-        c_in = torch.zeros(feat.shape).to(device) # (B, L, C)
-
-        # Use residual from the model with no quantization
+        # Generate training residual
         feat_in = feat + 0.01 * (torch.rand(feat.shape)-0.5).to(device)/2
         f_out, _, _ = model(feat_in)# inputs previous frames; predicts i+1th frame
         r = feat_in[:,1:,:18] - f_out[:,:-1, :]
         r = torch.reshape(r[:,:,-cfg['code_dims']:], (-1, cfg['code_dims'])).cpu().data.numpy() # (9000, 18)
+        r = np.array([r[i] for i in range(len(r)) if sum(abs(r[i])) > l2])
         
+        
+        # Generate synthesis residual
+        # c_out, r, r_qtz, r_bl, l1_ratio, l2_ratio = model.encoder(
+            # cfg=cfg, feat=feat, mask=None, l1=l1, l2=l2, qtz=0)
+
+        
+        # Code above threshold
+        r = torch.reshape(r[:,:,-cfg['code_dims']:], (-1, cfg['code_dims'])).cpu().data.numpy() # (B*L, n_dim)
+        # Code below threshold
+        # r = torch.reshape(r_bl[:,:,-cfg['code_dims']:], (-1, cfg['code_dims'])).cpu().data.numpy() # (B*L, n_dim)
+        
+        r = np.array([r[i] for i in range(len(r)) if sum(r[i]) != 0])
+
+
         # Use the quantization output
         # batch for feat is 1
 #         r = []
@@ -179,7 +194,7 @@ if __name__ == '__main__':
         
         else:
             for i in range(cfg['stages']):
-                for _ in range(20):
+                for _ in range(10):
                     codebook[i] = update(r, codebook[i], cfg['n_entries'][i]) # (nb_entries, ndims)
     
                 qr = quantize(codebook[i], r)

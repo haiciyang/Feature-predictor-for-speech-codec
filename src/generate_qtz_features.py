@@ -53,7 +53,7 @@ def enc_features(cfg, model_f, sample_name, c, nm_c, mask, l1, l2, vq_quantize, 
     else:
         feat = c[:, :, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
 
-    feat_in, r, r_qtz, ind1, ind2 = model_f.encoder(cfg = cfg, feat=feat, n_dim=cfg['code_dim'], mask = mask, l1=l1, l2=l2, vq_quantize=vq_quantize, scl_quantize=scl_quantize, qtz=qtz)     
+    feat_in, r, r_qtz, ind1, ind2 = model_f.encoder(cfg = cfg, feat=feat, mask = mask, l1=l1, l2=l2, vq_quantize=vq_quantize, scl_quantize=scl_quantize, qtz=qtz)     
     
     feat_in *= MAXI
 

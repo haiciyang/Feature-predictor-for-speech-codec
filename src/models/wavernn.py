@@ -145,7 +145,7 @@ class Wavernn(nn.Module):
     
     
     # @ex.capture
-    def encoder(self, cfg, feat, n_dim, mask, l1, l2, vq_quantize, scl_quantize, qtz=1):
+    def encoder(self, cfg, feat, mask, l1, l2, vq_quantize = None, scl_quantize = None, qtz=1):
 
         '''
         Input: feat, n_dim, mask
@@ -161,49 +161,57 @@ class Wavernn(nn.Module):
         c_in[:,1:,-2:] = feat[:,:,-2:]
         r = torch.zeros(B, L, 18).to(device)
         r_qtz = torch.zeros(B, L, 18).to(device)
+        r_under = torch.zeros(B, L, 18).to(device)
         h1 = h2 = None
 
         num_ind1 = 0
         num_ind2 = 0
+
         for i in range(c_in.shape[1]-1):
 
-            f_out, h1, h2 = self.forward(c_in[:, :i+1, :], h1, h2)# inputs previous frames; predicts i+1th frame
+            f_out, h1, h2 = self.forward(x=c_in[:, i:i+1, :], h1=h1, h2=h2)# inputs previous frames; predicts i+1th frame
             f_out = f_out[:,-1,:] 
             r_s = feat[:,i,:-2] - f_out.clone()
             # r[:,i,:] = r_s
             
+            
             # --- Define indicator for scalar quantization and VQ --- 
             if mask is None: # Use threshold
-                ind1 = abs(r_s[0,0]) > l1
-                ind2 = abs(torch.sum(r_s[0,1:])) > l2
+                ind1 = (abs(r_s[:,0]) > l1).to(int).unsqueeze(1) # (bt, 1)
+                num_ind1 += sum(ind1)
+                
+                ind2 = (torch.sum(abs(r_s[:,1:]), -1) > l2).to(int).unsqueeze(1) # (bt, 1)
+                num_ind2 += sum(ind2)
+                
             if mask is not None: # Use input mask
                 ind1 = ind2 = mask[i]
+                
+            r_under[:,i,1:] = r_s[:,1:] * (1-ind2)
             
-            # --- Scalar quantization for c0 ---
-            if ind1:
-                num_ind1 += 1
-                r[:,i,0:1] = r_s[:,0:1]
-                if qtz:
-                    r_s[:,0:1] = torch.tensor(scl_quantize((r_s[:,0:1]).cpu().data.numpy(), cfg['scl_cb_path'])).to(device)
-                    r_qtz[:,i,0:1] = r_s[:,0:1]
+            r_s[:,0:1] = r_s[:,0:1] * ind1
+            r_s[:,1:] = r_s[:,1:] * ind2
+            
+            r[:,i,:] = r_s
+            
+            if qtz: # Dont qtz when synthesize residuals for training codebook
+                
+                # --- Scalar quantization for c0 ---
+                for k in range(len(ind1)):
+                    if ind1[k,0]:
+                        r_qtz[k:k+1,i,0:1] = torch.tensor(scl_quantize((r_s[k:k+1,0:1]).cpu().data.numpy(), cfg['scl_cb_path'])).to(device)
 
-                
-                
-            # --- VQ for C1-C17 ---
-            if ind2:
-                num_ind2 += 1
-                r[:,i,1:] = r_s[:,1:]
-                if qtz:
-                    r_s[:,-n_dim:] = torch.tensor(vq_quantize((r_s[:,-n_dim:]).cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
-                    r_qtz[:,i,-n_dim:] = r_s[:,-n_dim:]
+                # --- VQ for C1-C17 ---
+                for k in range(len(ind2)):
+                    if ind2[k,0]:
+                        r_qtz[k:k+1,i,1:] = torch.tensor(vq_quantize((r_s[k:k+1,1:]).cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
             
-            if qtz:
                 c_in[:,i+1,:-2] = f_out + r_qtz[:,i,:]
+                
             else:
-                c_in[:,i+1,:-2] = f_out + r[:,i,:] + 0.01 * (torch.rand(f_out.shape)-0.5).to(device)/2
+                c_in[:,i+1,:-2] = f_out + r[:,i,:]  # 0.01 * (torch.rand(f_out.shape)-0.5).to(device)/2
         
         # print(num_ind1 / L, num_ind2 / L)
-        return c_in[:,1:,:], r, r_qtz, num_ind1 / L, num_ind2 / L
+        return c_in[:,1:,:], r, r_qtz, r_under, (num_ind1/B/L).data, (num_ind2/B/L).data
     
     @ex.capture
     def decoder(self, cfg, feat, r):
@@ -214,7 +222,7 @@ class Wavernn(nn.Module):
 
         for i in range(c.shape[1]-1):
 
-            f_out = self.forward(c[:, :i+1, :])[:,-1,:] # inputs previous frames; predicts i+1th frame
+            f_out, h1, h2 = self.forward(x=c[:, i:i+1, :], h1=h1, h2=h2)[:,-1,:] # inputs previous frames; predicts i+1th frame
             c[:,i+1,:-2] = f_out + r[:,i+1, :]
             
         

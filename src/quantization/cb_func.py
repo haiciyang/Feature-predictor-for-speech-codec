@@ -48,7 +48,7 @@ def vq_train(data, codebook, nb_entries):
 
     test = np.sum(codebook, -1) # (nb_entries, )
     
-    for _ in range(20):
+    for _ in range(10):
         codebook = update(data, codebook, nb_entries)
         
     return codebook

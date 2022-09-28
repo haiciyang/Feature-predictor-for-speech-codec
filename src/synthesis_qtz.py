@@ -101,8 +101,8 @@ def synthesis(cfg):
     
     results = []
     
-    l1 = 0.075
-    l2 = 0.075
+    l1 = 0.050
+    l2 = 0.055
     
 
     for ns, (sample_name, sample, nm_c, qtz_c) in enumerate(test_loader):
@@ -133,14 +133,13 @@ def synthesis(cfg):
         mask = None
         
         feat = nm_c[:,:,:-16].to('cuda')
-        c_in, r, r_qtz = model_f.encoder(cfg=cfg, feat=feat, n_dim=cfg['code_dim'], mask = mask, l1=l1, l2=l2, vq_quantize=vq_quantize, scl_quantize=scl_quantize)     
+        c_in, r, r_qtz, ind1, ind2 = model_f.encoder(cfg=cfg, feat=feat, mask = mask, l1=l1, l2=l2, vq_quantize=vq_quantize, scl_quantize=scl_quantize)     
+        print(ind1, ind2)
         
         c_in *= MAXI
-        
         e, lpc_c, rc = ceps2lpc_v(c_in.reshape(-1, c_in.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
         all_features = torch.cat((c_in.cpu(), lpc_c.unsqueeze(0)), -1)
         
-
         np.save('../samples/{}/{}_cin_thrd_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), \
                 all_features.cpu().data.numpy())
         
