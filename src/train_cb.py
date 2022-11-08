@@ -10,6 +10,7 @@ import math
 import librosa
 import numpy as np
 from tqdm import tqdm
+from sklearn.cluster import KMeans
 from matplotlib import pyplot as plt
 
 import torch
@@ -72,19 +73,26 @@ if __name__ == '__main__':
         'n_sample_seg': 2400,
         'normalize': True,
         
-        # 'cb_path': '../codebooks/ceps_vq_codebook_2_1024_17.npy',
+        # 'cb_path': '../codebooks/ceps_vq_codebook_mask_30.npy',
         'cb_path': '',
-        'n_entries': [1024,1024], 
-        'stages': 2,
+        'n_entries': [512], 
+        'stages': 1,
         'code_dims': 17, 
+        'train_bl': True, 
+        'scl_clusters': 256, 
+        'scl_clusters_bl': 16, 
         # 'scl_cb_path': '../codebooks/scalar_center_256.npy',
         
-        'note': '2_1024_25',
+        'note': 'mask30_bl',
         
         
-        'transfer_model': '0722_001326',
+        # 'transfer_model': '0722_001326',
+        # 'transfer_model': '1006_174335',
+        'transfer_model': '1009_171447',
         # 'transfer_model': '0714_125944',
-        'epoch': '4000'
+        'epoch': '1560'
+        # 'epoch': '2665'
+        # 'epoch': '2000'
     }
     
     # 3s speech
@@ -122,12 +130,16 @@ if __name__ == '__main__':
             codebook.append(np.zeros((cfg['n_entries'][i], cfg['code_dims'])))
     
     
-    # l1 = 0.07
-    # l2 = 0.23
-    l2 = 0.17
+    l1 = 0.09
+    l2 = 0.28
     
+    scl_res = []
+    scl_res_bl = []
+    
+    print('training:','../codebooks/ceps_vq_codebook_{}.npy'.format(cfg['note']))
     
     for batch_idx, inp in enumerate(train_loader):
+    # for inp in tqdm(train_loader):
         
         # Encoder
         
@@ -144,39 +156,37 @@ if __name__ == '__main__':
 
 
         # Generate training residual
-        feat_in = feat + 0.01 * (torch.rand(feat.shape)-0.5).to(device)/2
-        f_out, _, _ = model(feat_in)# inputs previous frames; predicts i+1th frame
-        r = feat_in[:,1:,:18] - f_out[:,:-1, :]
-        r = torch.reshape(r[:,:,-cfg['code_dims']:], (-1, cfg['code_dims'])).cpu().data.numpy() # (9000, 18)
-        r = np.array([r[i] for i in range(len(r)) if sum(abs(r[i])) > l2])
+#         feat_in = feat + 0.01 * (torch.rand(feat.shape)-0.5).to(device)/2
+#         f_out, _, _ = model(feat_in)# inputs previous frames; predicts i+1th frame
+#         r = feat_in[:,1:,:18] - f_out[:,:-1, :]
+#         r = torch.reshape(r[:,:,-cfg['code_dims']:], (-1, cfg['code_dims'])).cpu().data.numpy() # (9000, 18)
+#         r = np.array([r[i] for i in range(len(r)) if sum(abs(r[i])) > l2])
         
         
         # Generate synthesis residual
-        # c_out, r, r_qtz, r_bl, l1_ratio, l2_ratio = model.encoder(
-            # cfg=cfg, feat=feat, mask=None, l1=l1, l2=l2, qtz=0)
-
+#         c_out, r, r_qtz, r_bl, l1_ratio, l2_ratio, cb = model.encoder(
+#             cfg=cfg, feat=feat, mask=None, l1=l1, l2=l2, qtz=0)
         
-        # Code above threshold
-        r = torch.reshape(r[:,:,-cfg['code_dims']:], (-1, cfg['code_dims'])).cpu().data.numpy() # (B*L, n_dim)
-        # Code below threshold
-        # r = torch.reshape(r_bl[:,:,-cfg['code_dims']:], (-1, cfg['code_dims'])).cpu().data.numpy() # (B*L, n_dim)
+        c_in, r_orig, r, r_bl, _, _, _ = model.mask_enc(
+            cfg=cfg, feat=feat, vq_quantize=None, scl_quantize=None, qtz=False) 
         
-        r = np.array([r[i] for i in range(len(r)) if sum(r[i]) != 0])
 
+        # Train scalar codebook
+        scl_res.extend(np.array([k for k in r[:,:,0].cpu().data.numpy().flatten() if k != 0]))
+        scl_res_bl.extend(np.array([k for k in r_bl[:,:,0].cpu().data.numpy().flatten() if k != 0]))
 
-        # Use the quantization output
-        # batch for feat is 1
-#         r = []
-#         for i in tqdm(range(len(feat))):
-#             feat_sub = feat[i:i+1]
-#             mask = torch.ones(nm_c.shape[1])
-#             mask[:nm_c.shape[1]//2*2] = torch.tensor((1,0)).repeat(nm_c.shape[1]//2)
-#             c_in, r_sub, r_qtz = model.encoder(cfg=cfg, feat=feat_sub, n_dim=cfg['code_dims'],mask = mask, l1=l1, l2=l2,  vq_quantize=vq_quantize, scl_quantize=scl_quantize, qtz=0) 
-
-#             r_sub = torch.cat([r_sub[:,i,-cfg['code_dims']:] for i in range(r_sub.shape[1]) if torch.sum(r_sub[:,i,-cfg['code_dims']:]) == 0], 0).cpu().data.numpy() # (45, 17)
-#             r.append(r_sub)
+        # print(r.shape, r_bl.shape)
+    
+        if not cfg['train_bl']:
+            # Code above threshold
+            r = torch.reshape(r[:,:,-cfg['code_dims']:], (-1, cfg['code_dims'])).cpu().data.numpy() # (B*L, n_dim)
+        elif cfg['train_bl']:
+            # Code below threshold
+            r = torch.reshape(r_bl[:,:,-cfg['code_dims']:], (-1, cfg['code_dims'])).cpu().data.numpy() # (B*L, n_dim)
         
-#         r = np.vstack(r)
+        r = np.array([r[i] for i in range(len(r)) if sum(abs(r[i])) != 0])
+
+
         
         print('Finish residual calculating of epoch {}'.format(batch_idx))
 
@@ -205,10 +215,17 @@ if __name__ == '__main__':
     
 
     np.save('../codebooks/ceps_vq_codebook_{}.npy'.format(cfg['note']), codebook)
-        
-        
-        
     
+#     kmeans = KMeans(n_clusters=cfg['scl_clusters'], random_state=0).fit(np.array(scl_res).flatten()[:,None])
+#     codes = kmeans.cluster_centers_
+#     np.save('../codebooks/scalar_center_{}_{}_tr.npy'.format(str(cfg['scl_clusters']), cfg['note']), codes)
+    
+    
+#     kmeans = KMeans(n_clusters=cfg['scl_clusters_bl'], random_state=0).fit(np.array(scl_res_bl).flatten()[:,None])
+#     codes = kmeans.cluster_centers_
+#     np.save('../codebooks/scalar_center_{}_{}_bl_tr.npy'.format(str(cfg['scl_clusters_bl']), cfg['note']), codes)
+        
+        
     
     
     

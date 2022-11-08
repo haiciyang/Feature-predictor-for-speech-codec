@@ -8,6 +8,7 @@ from torch import Tensor
 # from quantization.vq_func import quantize, scl_quantize
 from typing import Optional, Tuple
 
+import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_packed_sequence
 
 from config import ex
@@ -22,7 +23,11 @@ class Wavernn(nn.Module):
     
     def __init__(self, in_features=20, gru_units1=384, gru_units2=16, fc_units=20, attn_units=20, rnn_layers=2, bidirectional = False, packing=False):
         
+        # scale: how much portion of the residuals left 
+        
         super(Wavernn, self). __init__()
+        
+        self.scale = 1
         
         self.relu = nn.ReLU()
         
@@ -39,11 +44,18 @@ class Wavernn(nn.Module):
         #     nn.Tanh()
         # )
         
+        
         self.dual_fc = nn.Sequential(
             nn.Linear(gru_units2, fc_units),
             # nn.ReLU()
             nn.Tanh()
         )
+        
+        # self.mask_rnn = nn.GRU(in_features, fc_units, 1, bidirectional=True, batch_first=True) # (Bt, L, n_dim)
+        # self.mask_fc = nn.Sequential(
+        #     nn.Linear(fc_units*2, 2),
+        #     nn.Tanh()
+        # )
         
         # self.loc_attn = LocationAwareAttention(hidden_dim = attn_units, smoothing=True)
 
@@ -79,6 +91,11 @@ class Wavernn(nn.Module):
         # x = nn.functional.softmax(torch.sum(x, dim=1), dim = -1)
         x = torch.sum(x, dim=1)        
         # x = torch.tanh(x)
+        
+        # mask = self.mask(x)
+        # mask = F.tanh((mask+scale) * 100) # (bt, L, 2)
+        
+        
         
         # x = self.loop_attention(x)
 
@@ -145,7 +162,7 @@ class Wavernn(nn.Module):
     
     
     # @ex.capture
-    def encoder(self, cfg, feat, mask, l1, l2, vq_quantize = None, scl_quantize = None, qtz=1):
+    def encoder(self, cfg, feat, mask, l1, l2, vq_quantize = None, scl_quantize = None, qtz=True):
 
         '''
         Input: feat, n_dim, mask
@@ -166,54 +183,187 @@ class Wavernn(nn.Module):
 
         num_ind1 = 0
         num_ind2 = 0
-
+        ind1_mask = torch.zeros(B, L, 1).to(device)
+        ind2_mask = torch.zeros(B, L, 1).to(device)
+        
+        cb_tot = [0,0,0,0,0]
+        
+        
         for i in range(c_in.shape[1]-1):
 
             f_out, h1, h2 = self.forward(x=c_in[:, i:i+1, :], h1=h1, h2=h2)# inputs previous frames; predicts i+1th frame
             f_out = f_out[:,-1,:] 
             r_s = feat[:,i,:-2] - f_out.clone()
-            # r[:,i,:] = r_s
+            r[:,i,:] = r_s
             
             
             # --- Define indicator for scalar quantization and VQ --- 
             if mask is None: # Use threshold
                 ind1 = (abs(r_s[:,0]) > l1).to(int).unsqueeze(1) # (bt, 1)
                 num_ind1 += sum(ind1)
+                ind1_mask[:, i, :] = ind1
                 
                 ind2 = (torch.sum(abs(r_s[:,1:]), -1) > l2).to(int).unsqueeze(1) # (bt, 1)
                 num_ind2 += sum(ind2)
+                ind2_mask[:, i, :] = ind2
                 
             if mask is not None: # Use input mask
-                ind1 = ind2 = mask[i]
-                
-            r_under[:,i,1:] = r_s[:,1:] * (1-ind2)
-            
-            r_s[:,0:1] = r_s[:,0:1] * ind1
-            r_s[:,1:] = r_s[:,1:] * ind2
-            
-            r[:,i,:] = r_s
-            
+                ind1 = mask[:,i,0]
+                ind2 = mask[:,i,1]
+    
             if qtz: # Dont qtz when synthesize residuals for training codebook
                 
                 # --- Scalar quantization for c0 ---
                 for k in range(len(ind1)):
                     if ind1[k,0]:
-                        r_qtz[k:k+1,i,0:1] = torch.tensor(scl_quantize((r_s[k:k+1,0:1]).cpu().data.numpy(), cfg['scl_cb_path'])).to(device)
-
+                        rq, cb_t = scl_quantize((r_s[k:k+1,0:1]).cpu().data.numpy(), cfg['scl_cb_path'])
+                        r_qtz[k:k+1,i,0:1] = torch.tensor(rq).to(device)
+                        cb_tot[0] += cb_t
+                    elif cfg['bl_scl_cb_path']:
+                        rq, cb_t = scl_quantize((r_s[k:k+1,0:1]).cpu().data.numpy(), cfg['bl_scl_cb_path'])
+                        r_qtz[k:k+1,i,0:1] = torch.tensor(rq).to(device)
+                        cb_tot[1] += cb_t
+                        
                 # --- VQ for C1-C17 ---
                 for k in range(len(ind2)):
                     if ind2[k,0]:
-                        r_qtz[k:k+1,i,1:] = torch.tensor(vq_quantize((r_s[k:k+1,1:]).cpu().data.numpy(), cfg['n_entries'], cfg['cb_path'])).to(device)
-            
+                        rq, cb_t = vq_quantize((r_s[k:k+1,1:]).cpu().data.numpy(), \
+                                               cfg['cb_path'])
+                        r_qtz[k:k+1,i,1:] = torch.tensor(rq).to(device)
+                        cb_tot[2] += cb_t[0]
+                        cb_tot[3] += cb_t[1]
+                    elif cfg['bl_cb_path']:
+                        rq, cb_t = vq_quantize((r_s[k:k+1, 1:]).cpu().data.numpy(), \
+                                               cfg['bl_cb_path'])
+                        r_qtz[k:k+1,i,1:] = torch.tensor(rq).to(device)
+                        # cb_tot1 += cb_t[0]
+                        cb_tot[4] += cb_t[-1]
+
                 c_in[:,i+1,:-2] = f_out + r_qtz[:,i,:]
                 
             else:
+                r_under[:,i,0:1] = r_s[:,0:1] * (1-ind1)
+                r_under[:,i,1:] = r_s[:,1:] * (1-ind2)
+
+                r[:,i, 0:1] = r_s[:,0:1] * ind1
+                r[:,i, 1:] = r_s[:,1:] * ind2
+
+                
                 c_in[:,i+1,:-2] = f_out + r[:,i,:]  # 0.01 * (torch.rand(f_out.shape)-0.5).to(device)/2
         
         # print(num_ind1 / L, num_ind2 / L)
-        return c_in[:,1:,:], r, r_qtz, r_under, (num_ind1/B/L).data, (num_ind2/B/L).data
+        # return c_in[:,1:,:], r, r_qtz, r_under, (num_ind1/B/L).data, (num_ind2/B/L).data, cb_tot
+        return c_in[:,1:,:], r, r_qtz, r_under, ind1_mask, ind2_mask, cb_tot
     
-    @ex.capture
+    
+    def mask_enc(self, feat, cfg=None, vq_quantize=None, scl_quantize=None, qtz=False):
+
+        B, L, C = feat.shape
+
+        mask, _ = self.mask_rnn(feat) # (B, L, 2) (-1,1)
+        mask = self.mask_fc(mask) # (B, L, 2) (-1,1)
+        
+        mask = torch.sigmoid(mask * self.scale) #  (B, L, 1)
+        
+        
+        scl_mask = mask[:,:,0:1]
+        vct_mask = mask[:,:,1:2]
+
+        
+        c_in = torch.zeros(B, L, C-2).to(device) # (B, L, C)
+        r_orig = torch.zeros(B, L, C-2).to(device)
+        r = torch.zeros(B, L, C-2).to(device)
+        r_bl = torch.zeros(B, L, C-2).to(device)
+        
+        # print(scl_mask.shape)
+        
+        h1 = h2 = None
+        
+        c_inp = torch.zeros(B, 1, C-2).to(device)
+        
+        cb_tot = [0,0,0,0,0]
+        
+        for i in range(L):
+
+            c_inp = torch.cat((c_inp, feat[:,i:i+1, -2:]), -1)
+            f_out, h1, h2 = self.forward(x=c_inp, h1=h1, h2=h2)# inputs previous frames; predicts i+1th frame
+            r_s = feat[:,i:i+1,:-2].clone() - f_out.clone() # (B, 1, 2)
+            r_orig[:,i:i+1,:] = r_s
+            
+            r_mask, r_mask_bl, cb_tot = self.apply_mask(cfg, r_s, scl_mask[:,i:i+1, :], vct_mask[:,i:i+1,:], vq_quantize, scl_quantize, cb_tot, qtz)
+
+#             r_scl = r_s[:,:,0:1] * scl_mask[:,i:i+1, :].clone()
+#             r_vct = r_s[:,:,1:] * vct_mask[:,i:i+1,:].clone()
+ 
+#             r_all = torch.cat((r_scl, r_vct), -1)
+
+            c_inp = f_out.clone() + r_mask.clone()
+            
+            c_in[:,i:i+1,:] = c_inp
+
+            r[:,i:i+1,:] = r_mask.clone()
+            if r_mask_bl is not None:
+                r_bl[:,i:i+1,:] = r_mask_bl.clone()
+            
+        c_in = torch.cat((c_in, feat[:,:,-2:]), -1)
+        
+        return c_in, r_orig, r, r_bl, scl_mask, vct_mask, cb_tot
+    
+    
+    def apply_mask(self, cfg, r_s, scl_mask, vct_mask, vq_quantize, scl_quantize, cb_tot, qtz=False):
+        
+        # mask - [B, 1, 1]
+        # r_s - [B, 1, 18]
+        
+        B = r_s.shape[0]
+        C = r_s.shape[-1]
+        
+        r_mask_bl = None
+
+        if not qtz:
+            r_scl = r_s[:,:,0:1] * scl_mask
+            r_vct = r_s[:,:,1:] * vct_mask
+            
+            r_scl_bl = r_s[:,:,0:1] * (1-scl_mask)
+            r_vct_bl = r_s[:,:,1:] * (1-vct_mask)
+        
+            r_mask_bl = torch.cat((r_scl_bl, r_vct_bl), -1)
+
+
+        if qtz: # Dont qtz when synthesize residuals for training codebook
+            
+            r_scl = torch.zeros(B, 1, 1).to(device)
+            r_vct = torch.zeros(B, 1, C-1).to(device)
+            
+            # --- Scalar quantization for c0 ---
+            for k in range(len(scl_mask)):
+                if scl_mask[k,0,0]:
+                    rq, cb_t = scl_quantize((r_s[k:k+1,0,0:1]).cpu().data.numpy(), cfg['scl_cb_path'])
+                    r_scl[k:k+1,0,:] = torch.tensor(rq).to(device)
+                    cb_tot[0] += cb_t
+                elif cfg['bl_scl_cb_path']:
+                    rq, cb_t = scl_quantize((r_s[k:k+1,0:1]).cpu().data.numpy(), cfg['bl_scl_cb_path'])
+                    r_scl[k:k+1,0,:] = torch.tensor(rq).to(device)
+                    cb_tot[1] += cb_t
+                        
+            # --- VQ for C1-C17 ---
+            for k in range(len(scl_mask)):
+                if vct_mask[k,0,0]:
+                    rq, cb_t = vq_quantize((r_s[k:k+1,0, 1:]).cpu().data.numpy(), cfg['cb_path'])
+                    r_vct[k:k+1,0,:] = torch.tensor(rq).to(device)
+                    cb_tot[2] += cb_t[0]
+                    cb_tot[3] += cb_t[1]
+                elif cfg['bl_cb_path']:
+                    rq, cb_t = vq_quantize((r_s[k:k+1, 0, 1:]).cpu().data.numpy(), cfg['bl_cb_path'])
+                    r_vct[k:k+1,0,:] = torch.tensor(rq).to(device)
+                    cb_tot[3] += cb_t
+        
+        r_mask = torch.cat((r_scl, r_vct), -1)
+        
+        return r_mask, r_mask_bl, cb_tot
+
+
+    
     def decoder(self, cfg, feat, r):
 
 

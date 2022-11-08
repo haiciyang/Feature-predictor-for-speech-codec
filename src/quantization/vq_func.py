@@ -128,10 +128,10 @@ def quantize_mstage(x, n_entries, CEPS_CODEBOOK):
     for i in range(n_stages):
         csum += CEPS_CODEBOOK[i][index[i, 0]]
     
-    return csum
+    return csum, index[:, 0]
 
 
-def vq_quantize(r, n_entries, cb_path):
+def vq_quantize(r, cb_path):
     
     '''
     Input - features (batch_size, ndims)
@@ -140,20 +140,28 @@ def vq_quantize(r, n_entries, cb_path):
     
     CEPS_CODEBOOK = np.load(cb_path, allow_pickle=True)
     
+    n_entries = np.array([len(i) for i in CEPS_CODEBOOK])
+
     if len(CEPS_CODEBOOK.shape) == 2:
         CEPS_CODEBOOK = np.expand_dims(CEPS_CODEBOOK, 0)
     
     batch_size, ndims = r.shape
     
     qr = []
+    
+    cb_tot = [np.zeros(n_entries[i]) for i in range(len(n_entries))]
+    
     for vec in r:
-        qvec = quantize_mstage(vec, n_entries, CEPS_CODEBOOK)
+        qvec, index = quantize_mstage(vec, n_entries, CEPS_CODEBOOK)
         qr.append(qvec)
+        
+        for stage_i, cb_idx in enumerate(index):
+            cb_tot[stage_i][cb_idx] += 1
     
     qr = np.reshape(qr, (batch_size, ndims))
 
     
-    return qr
+    return qr, cb_tot
 
 
 def scl_quantize(data, cb_path):
@@ -162,6 +170,8 @@ def scl_quantize(data, cb_path):
     
     codes = np.load(cb_path)
     
+    cb_tot = np.zeros(len(codes))
+    
     dist_mat = (data.T - codes) ** 2 # (n_code, seq_length)
     argmin = np.argmin(dist_mat, 0) # (seq_length)
     
@@ -169,4 +179,7 @@ def scl_quantize(data, cb_path):
     
     q_data = np.array([codes[int(i)] for i in argmin])
     
-    return q_data[:,None]
+    for cb_idx in argmin:
+        cb_tot[cb_idx] += 1
+    
+    return q_data[:,None], cb_tot

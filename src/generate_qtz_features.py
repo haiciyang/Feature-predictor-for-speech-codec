@@ -52,8 +52,11 @@ def enc_features(cfg, model_f, sample_name, c, nm_c, mask, l1, l2, vq_quantize, 
         feat = nm_c[:, :, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
     else:
         feat = c[:, :, :-16].to(torch.float).to(device) # (batch_size, seq_length, ndims)
-
-    feat_in, r, r_qtz, ind1, ind2 = model_f.encoder(cfg = cfg, feat=feat, mask = mask, l1=l1, l2=l2, vq_quantize=vq_quantize, scl_quantize=scl_quantize, qtz=qtz)     
+    
+    # ind1, ind2, cb_t = None
+    feat_in, r, r_qtz, r_bl, ind1, ind2, cb_t = model_f.encoder(cfg = cfg, feat=feat, mask = mask, l1=l1, l2=l2, vq_quantize=vq_quantize, scl_quantize=scl_quantize, qtz=qtz)  
+    
+    # feat_in, r, r_qtz, r_bl, scl_mask, vct_mask, cb_t = model_f.mask_enc(feat=feat, cfg=cfg, vq_quantize=vq_quantize, scl_quantize=scl_quantize, qtz=qtz) 
     
     feat_in *= MAXI
 
@@ -66,7 +69,7 @@ def enc_features(cfg, model_f, sample_name, c, nm_c, mask, l1, l2, vq_quantize, 
                 shape=(10, 19, 36),
                 strides=(15*36*sizeof, 36*sizeof, sizeof)) #(10, 19, 36)
 
-    return all_features, r.cpu().data.numpy(), r_qtz.cpu().data.numpy(), ind1, ind2
+    return all_features, r.cpu().data.numpy(), r_bl.cpu().data.numpy(), r_qtz.cpu().data.numpy(), ind1, ind2, cb_t  
 
 def dec_features(model_f, nm_c, r_qtz):
     
@@ -86,6 +89,16 @@ def dec_features(model_f, nm_c, r_qtz):
                 strides=(15*36*sizeof, 36*sizeof, sizeof)) #(10, 19, 36)
 
     return all_features
+
+
+def cal_entropy(cb):
+    
+
+    cb /= np.sum(cb)
+    ent = np.sum(- cb * np.log2(cb + 1e-20))
+    
+    
+    return ent
 
 
 @ex.automain
@@ -108,8 +121,9 @@ def run(cfg, model_label):
     # Build model
     model_f = build_rnn().to(device)
     model_f.eval()
-        
-    transfer_model_path = '../saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model_f']), str(cfg['transfer_model_f']), str(cfg['transfer_epoch_f']))
+    
+    transfer_model = str(cfg['transfer_model_f'])#[1:] 
+    transfer_model_path = '../saved_models/{}/{}_{}.pth'.format(transfer_model, transfer_model, str(cfg['transfer_epoch_f']))
     print("Load checkpoint from: {}".format(transfer_model_path))
     model_f.load_state_dict(torch.load(transfer_model_path))
     
@@ -117,9 +131,8 @@ def run(cfg, model_label):
     pred = []
     
     note = cfg['note']
-    # note = '_01mask_nq'
-    l1 = 0.030
-    l2 = 0.030
+    l1 = cfg['l1']
+    l2 = cfg['l2']
 
     path = '/data/hy17/librispeech/libri_qtz_ft/{}{}'.format(cfg['cb_path'].split('/')[-1][17:-4], note)
 
@@ -146,49 +159,49 @@ def run(cfg, model_label):
 #             break     
     ind1_all = 0
     ind2_all = 0
+    
+    
+    cb_tot = [0,0,0,0,0]
+    
     k = 0
     for sample_name, x, c, nm_c in tqdm(train_data_loader):
         
+#         if k < 2000:
+#             continue  
         # print(sample_name)
         mask = None
         # mask = torch.ones(nm_c.shape[1])
         # mask[:nm_c.shape[1]//2*2] = torch.tensor((1,0)).repeat(nm_c.shape[1]//2)
         
-        all_features, r, r_qtz, ind1, ind2 = enc_features(cfg, model_f, sample_name, c, nm_c, mask, 
-                                              l1, l2, vq_quantize, scl_quantize, cfg['qtz'])
-        ind1_all += ind1
-        ind2_all += ind2
         
-        np.save(path+'/train/{}.npy'.format(sample_name[0]), all_features)
-        np.save(path+'/train/{}_nqresidual.npy'.format(sample_name[0]), r)
+        all_features, r, r_bl, r_qtz, ind1, ind2, cb_t = enc_features(cfg, model_f, sample_name, c, nm_c, mask, l1, l2, vq_quantize, scl_quantize, cfg['qtz'])
+        
+        # all_features, cb_t = enc_features(cfg, model_f, sample_name, c, nm_c, mask, l1, l2, vq_quantize, scl_quantize, cfg['qtz'])
+        
+#         ind1_all += ind1
+#         ind2_all += ind2
+        
+        cb_tot = [cb_t[i] + cb_tot[i] for i in range(len(cb_tot))]
+        
+        # print([cal_entropy(cb_tot[i]) for i in range(len(cb_tot))])
+        
+        # print(np.sum(cb_t2))
+        
+        # np.save(path+'/train/{}.npy'.format(sample_name[0]), all_features)
+        # np.save(path+'/train/{}_res.npy'.format(sample_name[0]), r)
+        # np.save(path+'/train/{}_res_bl.npy'.format(sample_name[0]), r_bl)
         
         # break
         
+        
         k += 1
-        if k == 2000:
+        if k == 1000:
             break
             
-    print(ind1_all/k, ind2_all/k)
-        
-#     for (qtz_inp, inp, all_inp) in tqdm(zip(qtz_dataset, dataset, all_dataset)): 
-#          # Calculate the average error between features and LPCNet original quantized features
-        
-#         orig_c = torch.unsqueeze(inp[-2], 0)[:, 2:-2, :].to(torch.float).to(device)
-#         qtz_c = torch.unsqueeze(all_inp[-2], 0)[:, 2:-2, :].to(torch.float).to(device)
-        
-#         # Feature predictive coding
-#         c = torch.unsqueeze(qtz_inp[-2], 0)
-#         nm_c = torch.unsqueeze(qtz_inp[-1], 0)
-        
-#         mask = torch.ones(nm_c.shape[1])
-#         all_features = generate_features(cfg, model_f, '', c, nm_c, mask)
-        
-        
-#         torch.save(orig_c, 'samples/orig_c.pt')
-#         torch.save(qtz_c, 'samples/qtz_c.pt')
-#         torch.save(all_features, 'samples/all_features.pt')
-        
-#         break
+    # print(ind1_all/k, ind2_all/k)
+    print([cal_entropy(cb_tot[i]) for i in range(len(cb_tot))])
+    
+
         
 
         

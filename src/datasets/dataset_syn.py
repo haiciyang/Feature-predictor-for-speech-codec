@@ -28,7 +28,8 @@ class Libri_lpc_data_syn(Dataset):
         self.chunks = chunks
         
 
-        path = '/data/hy17/librispeech/librispeech/dev-clean/*/*/*.wav'
+        # path = '/data/hy17/librispeech/librispeech/dev-clean/*/*/*.wav'
+        path = '/data/hy17/librispeech/librispeech/dev-clean/shortsets/*.wav'
         
         self.files = glob.glob(path)
         
@@ -54,15 +55,19 @@ class Libri_lpc_data_syn(Dataset):
         
         nb_frames = len(in_data) // 2400
         
+        
         # -- Load features --
         qtz_feat_path = self.feature_qtz_folder + sample_name + '_features.pt'
         feat_path = self.feature_folder + sample_name + '_features.pt'
             
-        qtz_features = torch.load(qtz_feat_path) # (19, 36)
-        qtz_features = qtz_features[:nb_frames]
+        qtz_features = torch.load(qtz_feat_path) # (N, 19, 36)
+        features = torch.load(feat_path) # (N, 19, 36)
         
-        features = torch.load(feat_path) # (19, 36)
+        nb_frames = min(nb_frames, len(qtz_features), len(features))
+        
+        qtz_features = qtz_features[:nb_frames]
         features = features[:nb_frames]
+        
         
         features[:,:,-2:] = qtz_features[:,:,-2:]
         # features[:,:,0] = qtz_features[:,:,0]
@@ -81,8 +86,8 @@ class Libri_lpc_data_syn(Dataset):
         in_data = torch.tensor(np.reshape(in_data[:len(in_data) // 2400 * 2400], (-1, 2400)))
         
         i = nb_frames-self.chunks if nb_frames > self.chunks else 0
+        # i=0
         
-
         x = torch.reshape(in_data[i:i+self.chunks], (self.chunks*2400,))
         feat = torch.reshape(features[i:i+self.chunks, 2:-2, :], 
                                  (self.chunks*15, -1)) # [n*15, 36]

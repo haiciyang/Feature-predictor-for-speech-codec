@@ -67,7 +67,7 @@ def savefig(cfg, data, tp, ns):
 @ex.automain
 def synthesis(cfg):
     # 3s speech
-    model_label_f = cfg['model_label_f']
+    model_label_f = cfg['model_label_f']#[1:]
     # model_label_s = cfg['model_label_s']
     
     if not os.path.exists('../samples/'+model_label_f):
@@ -86,6 +86,11 @@ def synthesis(cfg):
     model_f.load_state_dict(torch.load(path_f))
     model_f.eval()
     
+    # print(utils.get_n_params(model_f))
+    # fake()
+    
+
+    model_f.scale = 1000
 
     print("Load checkpoint from: {}".format(path_f))
     
@@ -101,18 +106,27 @@ def synthesis(cfg):
     
     results = []
     
-    l1 = 0.050
-    l2 = 0.055
+    l1 = cfg['l1']
+    l2 = cfg['l2']
     
-
+    sample_nl = ['1272-128104-0001']
+    # sample_nl = ['1272-128104-0001']
+    
     for ns, (sample_name, sample, nm_c, qtz_c) in enumerate(test_loader):
         
         # if ns >= cfg['num_samples']:
         #     break
         
+        if not sample_name[0] in sample_nl:
+            continue
+
         # Non-mask
         
-        saveaudio(sample, model_label_f, sample_name[0])
+        # saveaudio(sample, model_label_f, sample_name[0])
+        
+        # np.save('../samples/{}/{}_qtz.npy'.format(model_label_f, sample_name[0]), \
+        #         qtz_c.cpu().data.numpy())
+        # # continue
 
 #         mask = torch.ones(nm_c.shape[1])
         
@@ -133,24 +147,42 @@ def synthesis(cfg):
         mask = None
         
         feat = nm_c[:,:,:-16].to('cuda')
-        c_in, r, r_qtz, ind1, ind2 = model_f.encoder(cfg=cfg, feat=feat, mask = mask, l1=l1, l2=l2, vq_quantize=vq_quantize, scl_quantize=scl_quantize)     
-        print(ind1, ind2)
+        
+        c_in, r, r_qtz, r_bl, ind1, ind2, _ = model_f.encoder(cfg=cfg, feat=feat, mask = mask, l1=l1, l2=l2, vq_quantize=vq_quantize, scl_quantize=scl_quantize, qtz=cfg['qtz'])     
+        # print(ind1, ind2)
+        
+        # c_in, r, r_qtz, r_bl, scl_mask, vct_mask, cb_t = model_f.mask_enc(cfg=cfg, feat=feat, vq_quantize=vq_quantize, scl_quantize=scl_quantize, qtz=cfg['qtz']) 
+#         c_in = torch.cat((c_in, feat[:,:,-2:]), -1)
+        # print(scl_mask, vct_mask)
         
         c_in *= MAXI
         e, lpc_c, rc = ceps2lpc_v(c_in.reshape(-1, c_in.shape[-1]).cpu()) # lpc_c - (N*(L-1), 16)
         all_features = torch.cat((c_in.cpu(), lpc_c.unsqueeze(0)), -1)
         
-        np.save('../samples/{}/{}_cin_thrd_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), \
-                all_features.cpu().data.numpy())
+        # np.save('../samples/{}/{}_pred_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), \
+                # c_in.cpu().data.numpy())
+        # np.save('../samples/{}/{}_mask1_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), ind1.cpu().data.numpy())
+        # np.save('../samples/{}/{}_mask2_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), ind2.cpu().data.numpy())
+        np.save('../samples/{}/{}_r_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), r.cpu().data.numpy())
         
-        np.save('../samples/{}/{}_r_thrd_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), \
-                r.cpu().data.numpy())
+#         np.save('../samples/{}/{}_r_orig_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), \
+#                 r_orig.cpu().data.numpy())
         
-        # np.save('../samples/{}/{}_qtz.npy'.format(model_label_f, sample_name[0]), \
-                # qtz_c.cpu().data.numpy())
+#         np.save('../samples/{}/{}_r_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), \
+#                 r.cpu().data.numpy())
+        
+#         np.save('../samples/{}/{}_r_bl_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), \
+#                 r_bl.cpu().data.numpy())
+        
+        
+        # np.save('../samples/{}/{}_truth_{}.npy'.format(model_label_f, sample_name[0], cfg['note']), feat.cpu().data.numpy())
+        
+        
+        
+
         
         # fake()
-        break
+        # break
         
         
 #         if cfg['normalize']:

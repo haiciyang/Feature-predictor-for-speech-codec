@@ -21,6 +21,7 @@ from torch.nn.utils.rnn import pack_padded_sequence
 
 import utils
 from models.wavernn import Wavernn
+# from models.wavernn_para import Wavernn_para
 from datasets.dataset import Libri_lpc_data
 from datasets.dataset_orig import Libri_lpc_data_orig
 from models.modules import ExponentialMovingAverage, GaussianLoss
@@ -49,7 +50,7 @@ def gaussian_loss(mean, log_std, y):
     return - log_probs.squeeze().mean()
     
 
-def train(model, optimizer, train_loader, epoch, model_label, padding, packing, fc_units, normalize, debugging):
+def train(model, optimizer, train_loader, epoch, model_label, padding, packing, fc_units, normalize, keep_rate, debugging):
 
     model.train()
     
@@ -59,6 +60,9 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
     exc_hat = None
     
     for batch_idx, (sample_name, x, c, nm_c) in enumerate(train_loader):
+        
+        if batch_idx >10 and model.scale < 100:
+            model.scale += 5
         
         if normalize:
             feat = nm_c[:, 2:-2, :-16].to(torch.float).to(device) # (B, L, C)
@@ -70,35 +74,22 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
         else:
             inp = feat
  
-        feat_out, _, _ = model(inp) # (B, L, C)
-        
-#         print(feat_out.shape)
-#         fake()
-    
-        # feat_para = model(inp) # (B, L, C)
-        # feat_mu = feat_para[:,:,:fc_units//2]
-        # feat_logvar = feat_para[:,:,fc_units//2:]
-        
-        
-        # loss = gaussian_loss(feat_mu[:,:-1,:], feat_logvar[:,:-1,:], nm_feat[:,1:,:18])
-        # loss = gaussian_loss(feat_mu[:,:-1,:], feat_logvar[:,:-1,:], feat[:,1:,:]-feat[:, :-1,:])
-        # loss = gaussian_loss(feat_mu[:,:-1,:], feat_logvar[:,:-1,:], feat[:,:-1,:18]-feat[:,1:,:18])
-
-        # feat_out = nm_feat_out * MAXI
-        
-        # loss = mseloss(feat_out, feat[:,1:-1,:fc_units])
-        loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units])
-        # loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units]-feat[:, :-1,:fc_units])
-        
-        # loss = 1000 * (mseloss(nm_feat_out[:,:-1,:], nm_feat[:,1:,:]) + \
-        # mseloss(torch.softmax(nm_feat_out[:,:-1,:], -1), torch.softmax(nm_feat[:,1:,:], -1)))
-        # loss = 1000 * (3 * mseloss(nm_feat_out[:,:-1,:], nm_feat[:,1:,:]) - \
-        # mseloss(nm_feat_out, nm_feat))
+        if batch_idx <= 10:
+            feat_out, _, _ = model(inp) # (B, L, C)
+            loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units])
+            
+        else:
+            feat_out, r_orig, r, r_bl, scl_mask, vct_mask = model.mask_enc(inp)        
+            loss = mseloss(feat_out[:,:-1,:fc_units], feat[:,1:,:fc_units]) + (torch.mean(scl_mask)-keep_rate)**2 + (torch.mean(vct_mask)-keep_rate)**2
+            
+        # feat_mid, feat_out, _, _,_ = model(inp)
+        # loss = 2 * mseloss(feat_out, feat[:,:,:fc_units])\
+        # + mseloss(feat_mid[:,:-1,:], feat[:,1:,:fc_units])
         
         optimizer.zero_grad()
         loss.backward()        
         optimizer.step()
-
+    
         epoch_loss += loss.item()
 
         if batch_idx == 0 and epoch % 20 == 0:
@@ -108,14 +99,15 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
            
             
             # feat_out = nm_feat_out * MAXI
-
+            plt.imshow(feat_out[0,:,:].detach().cpu().numpy(), origin='lower', aspect='auto')
             plt.imshow(feat_out[0, :-1, :].detach().cpu().numpy(), origin='lower', aspect='auto')
             plt.colorbar()
             plt.savefig('../samples/{}/feat_out_{}.jpg'.format(model_label, epoch))
             plt.clf()
             
             # plt.imshow((feat[0, 1:-1, :fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
-            plt.imshow((feat[0, 1:, :fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
+            plt.imshow((feat[0, :, :fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
+            # plt.imshow((feat[0, 1:, :fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
             # plt.imshow((feat[0, 1:, :fc_units]-feat[0, :-1,:fc_units]).detach().cpu().numpy(), origin='lower', aspect='auto')
             plt.colorbar()
             plt.savefig('../samples/{}/feat_{}.jpg'.format(model_label, epoch))
@@ -127,7 +119,7 @@ def train(model, optimizer, train_loader, epoch, model_label, padding, packing, 
 
     return epoch_loss
 
-def evaluate(model, test_loader, padding, packing, fc_units, normalize, debugging):
+def evaluate(model, test_loader, padding, packing, fc_units, normalize, keep_rate, debugging):
 
     model.eval()
     epoch_loss = 0.
@@ -143,11 +135,23 @@ def evaluate(model, test_loader, padding, packing, fc_units, normalize, debuggin
             inp = pack_padded_sequence(feat, c_lens, batch_first=True, enforce_sorted=False)
         else:
             inp = feat
+            
+            
+        if batch_idx <= 10:
+            feat_out, _, _ = model(inp) # (B, L, C)
+            loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units])
+            
+        else:
+            feat_out, r_orig, r, r_bl, scl_mask, vct_mask = model.mask_enc(inp)        
+            loss = mseloss(feat_out[:,:-1,:fc_units], feat[:,1:,:fc_units]) + (torch.mean(scl_mask)-keep_rate)**2 + (torch.mean(vct_mask)-keep_rate)**2
         
-        feat_out, _, _ = model(inp) # (B, L, C)
-    
-        # loss = mseloss(feat_out, feat[:,1:-1,:fc_units])
-        loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units])
+        # feat_out, _, _ = model(inp) # (B, L, C)
+        # loss = mseloss(feat_out[:,:-1,:], feat[:,1:,:fc_units])
+        
+#         feat_mid, feat_out, _, _,_ = model(inp)
+        
+#         loss = 2 * mseloss(feat_out, feat[:,:,:fc_units])\
+#         # + mseloss(feat_mid[:,:-1,:], feat[:,1:,:fc_units])
 
         
         epoch_loss += loss.item()
@@ -189,19 +193,20 @@ if __name__ == '__main__':
         'epochs': 5000,
         'padding': False,
         'packing': False,
-        'normalize': False, 
+        'normalize': True, 
         
-        'gru_units1': 128,
-        'gru_units2': 64,
+        'gru_units1': 384,
+        'gru_units2': 128,
         'fc_units': 18, 
         'attn_units': 128,
         'rnn_layers': 2, 
         'bidirectional':False,
+        'keep_rate': 0.3, 
         
         
-        'transfer_model': None,
-        # 'transfer_model': '0714_125944',
-        # 'transfer_epoch': '2999'
+        # 'transfer_model': None,
+        'transfer_model': '0722_001326',
+        'transfer_epoch': '4000'
     }
     
     # ----- Wirte and print the hyper-parameters -------
@@ -233,13 +238,14 @@ if __name__ == '__main__':
                     fc_units = cfg['fc_units'],
                     attn_units = cfg['attn_units'],
                     bidirectional = cfg['bidirectional'],
-                    packing = cfg['packing']).to(device)
+                    packing = cfg['packing']
+                   ).to(device)
     
     if cfg['transfer_model'] is not None:
         
         transfer_model_path = '../saved_models/{}/{}_{}.pth'.format(str(cfg['transfer_model']), str(cfg['transfer_model']), str(cfg['transfer_epoch']))
         print("Load checkpoint from: {}".format(transfer_model_path))
-        model.load_state_dict(torch.load(transfer_model_path))
+        model.load_state_dict(torch.load(transfer_model_path), strict=False)
 
     optimizer = optim.Adam(model.parameters(), lr=cfg['learning_rate'])
 
@@ -252,10 +258,10 @@ if __name__ == '__main__':
         
         start = time.time()
         
-        train_epoch_loss = train(model, optimizer, train_loader, epoch, model_label, cfg['padding'], cfg['packing'], cfg['fc_units'], cfg['normalize'], cfg['debugging'])
+        train_epoch_loss = train(model, optimizer, train_loader, epoch, model_label, cfg['padding'], cfg['packing'], cfg['fc_units'], cfg['normalize'], cfg['keep_rate'], cfg['debugging'])
         
         with torch.no_grad():
-            test_epoch_loss = evaluate(model, test_loader, cfg['padding'], cfg['packing'], cfg['fc_units'], cfg['normalize'], cfg['debugging'])
+            test_epoch_loss = evaluate(model, test_loader, cfg['padding'], cfg['packing'], cfg['fc_units'], cfg['normalize'], cfg['keep_rate'], cfg['debugging'])
             
         end = time.time()
         duration = end-start

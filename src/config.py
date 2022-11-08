@@ -23,9 +23,13 @@ def my_config():
             'normalize': True, 
             'qtz': True,
             'scl_cb_path': '../codebook/scalar_center_256.npy',
-            'cb_path': '../codebook/ceps_vq_codebook_1_2048_large_17.npy',
+            'cb_path': '../codebook/ceps_vq_codebook_2_1024_large_17.npy',
+            'bl_scl_cb_path': '',
+            'bl_cb_path': '',
             'n_entries': [2048],
             'code_dim': 17,
+            'l1': 0, 
+            'l2': 0,
             
             # Training
             'epochs': 1000,
@@ -55,7 +59,7 @@ def my_config():
             'local': False,
             'fat_upsampler': True,
             'stft_loss': False,
-            
+        
             # Model hyper-parameters of WaveRNN
             'out_features': 20, 
             'gru_units1': 384, 
