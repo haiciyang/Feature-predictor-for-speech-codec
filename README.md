@@ -28,7 +28,7 @@ Learn codebook for the above-threshold residuals
 Learn codebook for the below-threshold residuals
 <code> python3 train_cb.py with cfg.transfer_model_f=0722_001326 cfg.transfer_epoch_f=4000 cfg.gru_units1=384 cfg.gru_units2=128 cfg.fc_units=18 cfg.l1=0.09 cfg.l2=0.28 cfg.n_entries=512 cfg.train_bl=True cfg.scl_clusters=256 cfg.scl_clusters_bl=16 cfg.note=[CB_Name]</code>
 #### 3. Vocoder (LPCNet) training
-Note: We update LPCNet's original data retrieving methods , and apply our own dataset
+Note: We update LPCNet's original data retrieving methods , and apply our own dataset; Training and testing of the LPCNet refers to LPCNet's original repository - https://github.com/xiph/LPCNet/blob/master/training_tf2/lpcnet.py
 
 - Train LPCNet with clean features
 <code>python3 training_tf2/train_lpcnet.py [Base_Model]</code>
