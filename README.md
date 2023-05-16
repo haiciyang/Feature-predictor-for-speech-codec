@@ -36,7 +36,7 @@ Note: We update LPCNet's original data retrieving methods , and apply our own da
 
 <code> python3 generate_qtz_features.py with cfg.transfer_model_f=[NEW_Model] cfg.transfer_epoch_f=[New_Model_Epoch] cfg.gru_units1=384 cfg.gru_units2=128 cfg.fc_units=18 cfg.orig=True cfg.scl_cb_path='../codebooks/scalar_center_256_[CB_Name].npy' cfg.cb_path='../codebooks/ceps_vq_codebook_[CB_Name].npy' cfg.l1=0.09 cfg.l2=0.28 cfg.qtz=True cfg.bl_scl_cb_path='../codebooks/scalar_center_16_[CB_Name]_bl.npy' cfg.bl_cb_path='../codebooks/ceps_vq_codebook_[CB_Name]_bl.npy'</code>
 
-- Fineturn LPCNet with the coded features
+- Fineturn LPCNet with the coded features (refer to LPCNet's repository https://github.com/xiph/LPCNet/blob/master/training_tf2/train_lpcnet.py )
 <code>python3 training_tf2/train_lpcnet.py [Base_Model] --quantize [Finetuned_Model]</code>
 
 ### Synthesis
